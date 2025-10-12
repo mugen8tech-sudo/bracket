@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 
 export default async function Header() {
@@ -17,22 +16,10 @@ export default async function Header() {
 
   return (
     <header className="w-full border-b bg-white">
-      <div className="mx-auto max-w-7xl px-4 h-14 flex items-center justify-between">
+      <div className="px-4 h-14 flex items-center justify-between">
         <div className="font-semibold">
           Bracket BANK — <span className="text-sm text-gray-500">TECH</span>
         </div>
-
-        {/* Menu sederhana */}
-        <nav className="flex items-center gap-4">
-          <Link href="/" className="text-sm text-gray-700 hover:underline">
-            Home
-          </Link>
-          <Link href="/leads" className="text-sm text-gray-700 hover:underline">
-            Leads
-          </Link>
-          {/* Menu lain nanti menyusul: Banks, Deposits, Withdrawals, ... */}
-        </nav>
-
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-700">{fullName}</span>
           <form action="/api/auth/signout" method="post">
