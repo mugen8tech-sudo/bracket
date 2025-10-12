@@ -3,3 +3,25 @@
 @tailwind utilities;
 
 html, body { height: 100%; }
+
+/* === Gaya tabel seperti Excel untuk semua halaman === */
+.table-grid {
+  border-collapse: collapse;              /* rapat seperti excel */
+  width: 100%;
+}
+
+.table-grid th,
+.table-grid td {
+  border: 1px solid #e5e7eb;             /* gray-200 */
+  padding: 0.5rem;                        /* p-2 */
+}
+
+.table-grid thead th {
+  background-color: #f9fafb;             /* gray-50 */
+  font-weight: 600;
+}
+
+.table-grid thead .filters th {
+  background-color: #ffffff;              /* baris filter putih */
+  padding: 0.25rem 0.5rem;                /* lebih rapat */
+}
