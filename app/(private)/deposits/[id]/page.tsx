@@ -45,6 +45,22 @@ export default async function DepositDetailPage({
     );
   }
 
+  // --- fetch relasi secara eksplisit (hindari nested array) ---
+  const [{ data: lead }, { data: bank }, { data: tenant }] = await Promise.all([
+    supabase.from("leads")
+      .select("name")
+      .eq("id", dep.lead_id)
+      .maybeSingle(),
+    supabase.from("banks")
+      .select("bank_code, account_name, account_no")
+      .eq("id", dep.bank_id)
+      .maybeSingle(),
+    supabase.from("tenants")
+      .select("name")
+      .eq("id", dep.tenant_id)
+      .maybeSingle(),
+  ]);
+
   // --- nama user pembuat (profiles.full_name) ---
   let createdByName: string | null = dep.created_by;
   if (dep.created_by) {
@@ -103,7 +119,7 @@ export default async function DepositDetailPage({
           <tbody>
             <tr>
               <td className="w-56">Lead</td>
-              <td>{dep.lead?.[0]?.name ?? "-"}</td>
+              <td>{lead?.name ?? "-"}</td>
             </tr>
             <tr>
               <td>Player</td>
@@ -112,8 +128,8 @@ export default async function DepositDetailPage({
             <tr>
               <td>Receiver Bank</td>
               <td>
-                [{dep.bank?.[0]?.bank_code}] {dep.bank?.[0]?.account_name}
-                {dep.bank?.[0]?.account_no}
+                {bank ? `[${bank.bank_code}] ${bank.account_name}
+                ${bank.account_no}` : "-"}
               </td>
             </tr>
             <tr>
@@ -151,7 +167,7 @@ export default async function DepositDetailPage({
             </tr>
             <tr>
               <td>Website</td>
-              <td>{dep.tenant?.[0]?.name ?? "-"}</td>
+              <td>{tenant?.name ?? "-"}</td>
             </tr>
             <tr>
               <td>By</td>
