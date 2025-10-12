@@ -87,6 +87,9 @@ function startOfDayJakartaISO(d: string) {
 function endOfDayJakartaISO(d: string) {
   return new Date(`${d}T23:59:59.999+07:00`).toISOString();
 }
+function todayJakartaYMD() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
+}
 
 function isTransferFee(desc?: string | null) {
   if (!desc) return false;
@@ -120,8 +123,8 @@ export default function BankMutationsTable() {
 
   // filters
   const [fId, setFId] = useState("");
-  const [fStart, setFStart] = useState("");
-  const [fFinish, setFFinish] = useState("");
+  const [fStart, setFStart] = useState<string>(todayJakartaYMD());
+  const [fFinish, setFFinish] = useState<string>(todayJakartaYMD());
   const [fCat, setFCat] = useState<CatKey>("ALL");
   const [fBankId, setFBankId] = useState<number | "">("");
   const [fDesc, setFDesc] = useState("");
@@ -285,8 +288,9 @@ export default function BankMutationsTable() {
       <div className="overflow-auto rounded border bg-white">
         <table className="table-grid min-w-[1250px]" style={{ borderCollapse: "collapse" }}>
           <thead>
-            {/* FILTER BARIS ATAS */}
+            {/* ===== ROW FILTERS (di atas HEADER) ===== */}
             <tr className="filters">
+              {/* ID */}
               <th className="w-24">
                 <div className="text-xs text-gray-500">Cari ID</div>
                 <input
@@ -296,29 +300,35 @@ export default function BankMutationsTable() {
                   placeholder="ID"
                 />
               </th>
-              <th className="w-60">
-                <div className="text-xs text-gray-500">Start (Click)</div>
-                <input
-                  type="date"
-                  value={fStart}
-                  onChange={(e) => setFStart(e.target.value)}
-                  className="w-full border rounded px-2 py-1"
-                />
+
+              {/* ✨ WAKTU CLICK: Start/Finish (atas-bawah seperti Leads/Deposits) */}
+              <th className="w-56">
+                <div className="flex flex-col gap-1">
+                  <input
+                    type="date"
+                    value={fStart}
+                    onChange={(e) => setFStart(e.target.value)}
+                    className="border rounded px-2 py-1"
+                    aria-label="Start (Click)"
+                  />
+                  <input
+                    type="date"
+                    value={fFinish}
+                    onChange={(e) => setFFinish(e.target.value)}
+                    className="border rounded px-2 py-1"
+                    aria-label="Finish (Click)"
+                  />
+                </div>
               </th>
-              <th className="w-60">
-                <div className="text-xs text-gray-500">Finish (Click)</div>
-                <input
-                  type="date"
-                  value={fFinish}
-                  onChange={(e) => setFFinish(e.target.value)}
-                  className="w-full border rounded px-2 py-1"
-                />
-              </th>
+
+              {/* Waktu Dipilih: tidak ada filter */}
+              <th className="w-56"></th>
+
+              {/* Cat */}
               <th className="w-36">
-                <div className="text-xs text-gray-500">Cat</div>
                 <select
                   value={fCat}
-                  onChange={(e) => setFCat(e.target.value as CatKey)}
+                  onChange={(e) => setFCat(e.target.value as any)}
                   className="w-full border rounded px-2 py-1"
                 >
                   {CAT_OPTIONS.map((c) => (
@@ -326,8 +336,9 @@ export default function BankMutationsTable() {
                   ))}
                 </select>
               </th>
+
+              {/* Bank */}
               <th className="min-w-[320px]">
-                <div className="text-xs text-gray-500">Bank</div>
                 <select
                   value={fBankId === "" ? "" : String(fBankId)}
                   onChange={(e) => setFBankId(e.target.value ? Number(e.target.value) : "")}
@@ -342,8 +353,9 @@ export default function BankMutationsTable() {
                   ))}
                 </select>
               </th>
+
+              {/* Desc */}
               <th className="w-56">
-                <div className="text-xs text-gray-500">Desc</div>
                 <input
                   value={fDesc}
                   onChange={(e) => setFDesc(e.target.value)}
@@ -351,20 +363,24 @@ export default function BankMutationsTable() {
                   placeholder="Desc"
                 />
               </th>
+
+              {/* Amount / Start / Finish: no filters */}
               <th className="w-24"></th>
               <th className="w-24"></th>
               <th className="w-24"></th>
+
+              {/* Submit */}
               <th className="w-28">
                 <button
                   onClick={() => load(1)}
-                  className="rounded bg-blue-600 text-white px-3 py-1 mt-5"
+                  className="rounded bg-blue-600 text-white px-3 py-1"
                 >
                   submit
                 </button>
               </th>
             </tr>
 
-            {/* HEADER */}
+            {/* ===== ROW HEADER ===== */}
             <tr>
               <th className="text-left w-24">ID</th>
               <th className="text-left w-56">Waktu Click</th>
