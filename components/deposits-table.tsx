@@ -5,170 +5,325 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 import Link from "next/link";
 
-type DepositRow = {
-  id: number;
-  tenant_id: string;
-  bank_id: number;
-  lead_id: number | null;
-  username_snapshot: string;
-  lead_name_snapshot: string | null;
-  amount_gross: number;
-  fee_direct_amount: number;
-  amount_net: number;
-  txn_at_final: string;   // waktu dipilih (backdate)
-  txn_at_opened: string;  // waktu real saat dibuat
-  created_by: string | null;
-  is_deleted: boolean;
-};
-
-const PAGE_SIZE = 50;
-
+/** ===== Helpers tanggal (Asia/Jakarta) ===== */
 function startOfDayJakartaISO(d: string) {
   return new Date(`${d}T00:00:00+07:00`).toISOString();
 }
 function endOfDayJakartaISO(d: string) {
   return new Date(`${d}T23:59:59.999+07:00`).toISOString();
 }
-// default "hari ini" (yyyy-mm-dd) di zona Asia/Jakarta
 function todayJakartaYMD() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 }
 
+const PAGE_SIZE = 50;
+
+/** Bentuk baris yang dipakai UI (disatukan dari dua skema) */
+type UIRow = {
+  id: number;
+  tenant_id: string;
+  bank_id: number;
+  lead_id: number | null;
+  lead_name: string | null;
+  username: string | null;
+  amount_net: number;
+  fee_amount: number;          // fee_direct_amount (baru) | fee_amount (lama)
+  txn_selected: string;        // txn_at_final (baru) | txn_at (lama)
+  txn_real: string | null;     // txn_at_opened (baru) | performed_at (lama)
+  created_by: string | null;
+  deleted: boolean;            // is_deleted (baru) | status==='reversed' (lama)
+};
+
 export default function DepositsTable() {
   const supabase = supabaseBrowser();
 
-  // header summary (hari ini)
+  /** ===== Skema aktif: 'new' (snapshot) atau 'legacy' ===== */
+  const [schema, setSchema] = useState<"new" | "legacy" | null>(null);
+
+  /** ===== Header summary (hari ini) ===== */
   const [sumToday, setSumToday] = useState<number>(0);
   const [countToday, setCountToday] = useState<number>(0);
   const [playersToday, setPlayersToday] = useState<number>(0);
 
-  // list & pagination
-  const [rows, setRows] = useState<DepositRow[]>([]);
+  /** ===== Data & pagination ===== */
+  const [rows, setRows] = useState<UIRow[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const [loading, setLoading] = useState(true);
 
-  // map user_id -> full_name untuk kolom "By"
+  /** ===== Map pembuat → full_name ===== */
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({});
 
-  // filters (default = hari ini)
+  /** ===== Filters (default = hari ini) ===== */
   const [fLead, setFLead] = useState("");
   const [fUser, setFUser] = useState("");
   const [fStart, setFStart] = useState<string>(todayJakartaYMD());
   const [fFinish, setFFinish] = useState<string>(todayJakartaYMD());
   const [fDeleted, setFDeleted] = useState<"ALL" | "YES" | "NO">("ALL");
 
-  // today summary (hitung berdasar waktu dipilih / txn_at_final)
-  const loadToday = async () => {
-    const y = todayJakartaYMD();
-    const s = startOfDayJakartaISO(y);
-    const e = endOfDayJakartaISO(y);
+  /** Deteksi skema sekali di awal */
+  useEffect(() => {
+    (async () => {
+      // Cek kolom 'username_snapshot' → indikasi skema baru
+      const { error } = await supabase
+        .from("deposits")
+        .select("username_snapshot")
+        .limit(1);
+      setSchema(error ? "legacy" : "new");
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    const { data, error } = await supabase
-      .from("deposits")
-      .select("amount_net, username_snapshot")
-      .gte("txn_at_final", s)
-      .lte("txn_at_final", e)
-      .eq("is_deleted", false);
+  /** Summary hari ini (menyesuaikan skema) */
+  const loadToday = useCallback(
+    async (sch: "new" | "legacy") => {
+      const y = todayJakartaYMD();
+      const s = startOfDayJakartaISO(y);
+      const e = endOfDayJakartaISO(y);
 
-    if (error) return;
-    const list =
-      ((data ?? []) as { amount_net: number; username_snapshot: string }[]) ||
-      [];
-    setSumToday(list.reduce((a, b) => a + Number(b.amount_net || 0), 0));
-    setCountToday(list.length);
-    setPlayersToday(new Set(list.map((x) => x.username_snapshot)).size);
-  };
+      if (sch === "new") {
+        const { data, error } = await supabase
+          .from("deposits")
+          .select("amount_net, username_snapshot")
+          .gte("txn_at_final", s)
+          .lte("txn_at_final", e)
+          .eq("is_deleted", false);
+        if (error) return;
+        const list =
+          ((data ?? []) as { amount_net: number; username_snapshot: string }[]) ||
+          [];
+        setSumToday(list.reduce((a, b) => a + Number(b.amount_net || 0), 0));
+        setCountToday(list.length);
+        setPlayersToday(new Set(list.map((x) => x.username_snapshot)).size);
+      } else {
+        const { data, error } = await supabase
+          .from("deposits")
+          .select("amount_net, username")
+          .gte("txn_at", s)
+          .lte("txn_at", e)
+          .eq("status", "posted");
+        if (error) return;
+        const list =
+          ((data ?? []) as { amount_net: number; username: string }[]) || [];
+        setSumToday(list.reduce((a, b) => a + Number(b.amount_net || 0), 0));
+        setCountToday(list.length);
+        setPlayersToday(new Set(list.map((x) => x.username)).size);
+      }
+    },
+    [supabase]
+  );
 
-  const buildQuery = () => {
-    let q = supabase
-      .from("deposits")
-      .select(
-        "id, tenant_id, bank_id, lead_id, username_snapshot, lead_name_snapshot, amount_gross, fee_direct_amount, amount_net, txn_at_final, txn_at_opened, created_by, is_deleted",
-        { count: "exact" }
-      )
-      .order("txn_at_final", { ascending: false });
+  /** Load list (menyesuaikan skema) */
+  const load = useCallback(
+    async (pageToLoad = page, sch?: "new" | "legacy") => {
+      if (!schema && !sch) return; // tunggu deteksi skema
+      const active = sch ?? (schema as "new" | "legacy");
 
-    if (fLead.trim()) q = q.ilike("lead_name_snapshot", `%${fLead.trim()}%`);
-    if (fUser.trim()) q = q.ilike("username_snapshot", `%${fUser.trim()}%`);
-    if (fStart) q = q.gte("txn_at_final", startOfDayJakartaISO(fStart));
-    if (fFinish) q = q.lte("txn_at_final", endOfDayJakartaISO(fFinish));
-    if (fDeleted === "YES") q = q.eq("is_deleted", true);
-    if (fDeleted === "NO") q = q.eq("is_deleted", false);
+      setLoading(true);
+      const from = (pageToLoad - 1) * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
 
-    return q;
-  };
-
-  const load = async (pageToLoad = page) => {
-    setLoading(true);
-    const from = (pageToLoad - 1) * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
-
-    const { data, error, count } = await buildQuery().range(from, to);
-    setLoading(false);
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    const list = (data as DepositRow[]) ?? [];
-    setRows(list);
-    setTotal(count ?? 0);
-    setPage(pageToLoad);
-
-    // --- ambil nama pembuat (profiles.full_name) untuk kolom "By"
-    const creatorIds = Array.from(
-      new Set(list.map((r) => r.created_by).filter((v): v is string => !!v))
-    );
-    if (creatorIds.length) {
-      const { data: profs } = await supabase
-        .from("profiles")
-        .select("user_id, full_name")
-        .in("user_id", creatorIds);
-      const map =
-        Object.fromEntries(
-          ((profs ?? []) as { user_id: string; full_name: string }[]).map(
-            (p) => [p.user_id, p.full_name]
+      if (active === "new") {
+        let q = supabase
+          .from("deposits")
+          .select(
+            "id, tenant_id, bank_id, lead_id, username_snapshot, lead_name_snapshot, amount_gross, fee_direct_amount, amount_net, txn_at_final, txn_at_opened, created_by, is_deleted",
+            { count: "exact" }
           )
-        ) || {};
-      setCreatorMap(map);
-    } else {
-      setCreatorMap({});
-    }
-  };
+          .order("txn_at_final", { ascending: false });
 
-  useEffect(() => {
-    loadToday();
+        if (fLead.trim())
+          q = q.ilike("lead_name_snapshot", `%${fLead.trim()}%`);
+        if (fUser.trim())
+          q = q.ilike("username_snapshot", `%${fUser.trim()}%`);
+        if (fStart) q = q.gte("txn_at_final", startOfDayJakartaISO(fStart));
+        if (fFinish) q = q.lte("txn_at_final", endOfDayJakartaISO(fFinish));
+        if (fDeleted === "YES") q = q.eq("is_deleted", true);
+        if (fDeleted === "NO") q = q.eq("is_deleted", false);
+
+        const { data, error, count } = await q.range(from, to);
+        setLoading(false);
+        if (error) {
+          alert(error.message);
+          return;
+        }
+
+        const list = (data as any[]) ?? [];
+        const ui: UIRow[] = list.map((r) => ({
+          id: r.id,
+          tenant_id: r.tenant_id,
+          bank_id: r.bank_id,
+          lead_id: r.lead_id,
+          lead_name: r.lead_name_snapshot ?? null,
+          username: r.username_snapshot ?? null,
+          amount_net: Number(r.amount_net || 0),
+          fee_amount: Number(r.fee_direct_amount || 0),
+          txn_selected: r.txn_at_final,
+          txn_real: r.txn_at_opened ?? null,
+          created_by: r.created_by ?? null,
+          deleted: !!r.is_deleted,
+        }));
+
+        setRows(ui);
+        setTotal(count ?? 0);
+        setPage(pageToLoad);
+
+        // map pembuat → full_name
+        const creatorIds = Array.from(
+          new Set(ui.map((r) => r.created_by).filter((v): v is string => !!v))
+        );
+        if (creatorIds.length) {
+          const { data: profs } = await supabase
+            .from("profiles")
+            .select("user_id, full_name")
+            .in("user_id", creatorIds);
+          const map =
+            Object.fromEntries(
+              ((profs ?? []) as { user_id: string; full_name: string }[]).map(
+                (p) => [p.user_id, p.full_name]
+              )
+            ) || {};
+          setCreatorMap(map);
+        } else setCreatorMap({});
+      } else {
+        // LEGACY: username, txn_at, status, fee_amount
+        // Jika filter "Lead name" → cari dulu ID lead
+        let leadIds: number[] | null = null;
+        if (fLead.trim()) {
+          const { data: leadList, error: eLead } = await supabase
+            .from("leads")
+            .select("id")
+            .ilike("name", `%${fLead.trim()}%`)
+            .limit(1000);
+          if (eLead) {
+            setLoading(false);
+            alert(eLead.message);
+            return;
+          }
+          leadIds = (leadList ?? []).map((x) => Number(x.id));
+          if (leadIds.length === 0) {
+            setRows([]);
+            setTotal(0);
+            setPage(1);
+            setLoading(false);
+            return;
+          }
+        }
+
+        let q = supabase
+          .from("deposits")
+          .select(
+            "id, tenant_id, bank_id, lead_id, username, amount_gross, fee_amount, amount_net, txn_at, performed_at, status, created_by",
+            { count: "exact" }
+          )
+          .order("txn_at", { ascending: false });
+
+        if (leadIds) q = q.in("lead_id", leadIds);
+        if (fUser.trim()) q = q.ilike("username", `%${fUser.trim()}%`);
+        if (fStart) q = q.gte("txn_at", startOfDayJakartaISO(fStart));
+        if (fFinish) q = q.lte("txn_at", endOfDayJakartaISO(fFinish));
+        if (fDeleted === "YES") q = q.eq("status", "reversed");
+        if (fDeleted === "NO") q = q.eq("status", "posted");
+
+        const { data, error, count } = await q.range(from, to);
+        setLoading(false);
+        if (error) {
+          alert(error.message);
+          return;
+        }
+
+        const list = (data as any[]) ?? [];
+
+        // ambil nama lead untuk tampilan
+        const leadIdSet = Array.from(
+          new Set(list.map((r) => r.lead_id).filter((v: any) => !!v))
+        );
+        let leadNameMap: Record<number, string> = {};
+        if (leadIdSet.length) {
+          const { data: leads2 } = await supabase
+            .from("leads")
+            .select("id, name")
+            .in("id", leadIdSet);
+          leadNameMap =
+            Object.fromEntries(
+              ((leads2 ?? []) as { id: number; name: string }[]).map((l) => [
+                l.id,
+                l.name,
+              ])
+            ) || {};
+        }
+
+        const ui: UIRow[] = list.map((r) => ({
+          id: r.id,
+          tenant_id: r.tenant_id,
+          bank_id: r.bank_id,
+          lead_id: r.lead_id,
+          lead_name: (r.lead_id && leadNameMap[r.lead_id]) || null,
+          username: r.username ?? null,
+          amount_net: Number(r.amount_net || 0),
+          fee_amount: Number(r.fee_amount || 0),
+          txn_selected: r.txn_at,
+          txn_real: r.performed_at ?? null,
+          created_by: r.created_by ?? null,
+          deleted: (r.status || "").toLowerCase() === "reversed",
+        }));
+
+        setRows(ui);
+        setTotal(count ?? 0);
+        setPage(pageToLoad);
+
+        // map pembuat → full_name
+        const creatorIds = Array.from(
+          new Set(ui.map((r) => r.created_by).filter((v): v is string => !!v))
+        );
+        if (creatorIds.length) {
+          const { data: profs } = await supabase
+            .from("profiles")
+            .select("user_id, full_name")
+            .in("user_id", creatorIds);
+          const map =
+            Object.fromEntries(
+              ((profs ?? []) as { user_id: string; full_name: string }[]).map(
+                (p) => [p.user_id, p.full_name]
+              )
+            ) || {};
+          setCreatorMap(map);
+        } else setCreatorMap({});
+      }
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    [fLead, fUser, fStart, fFinish, fDeleted, page, schema, supabase]
+  );
+
+  /** Initial load setelah skema terdeteksi */
   useEffect(() => {
-    load(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!schema) return;
+    loadToday(schema);
+    load(1, schema);
+  }, [schema, load, loadToday]);
 
   const applyFilters = (e?: React.FormEvent) => {
     e?.preventDefault();
     load(1);
   };
 
-  // ===== Delete modal =====
+  /** ===== Delete (Reversal) modal ===== */
   const [delOpen, setDelOpen] = useState(false);
   const [delNote, setDelNote] = useState("");
-  const [delRow, setDelRow] = useState<DepositRow | null>(null);
+  const [delRow, setDelRow] = useState<UIRow | null>(null);
   const [delBank, setDelBank] = useState<{
     bank_code: string;
     account_name: string;
     account_no: string;
   } | null>(null);
-  const [delRevAt, setDelRevAt] = useState<string>(""); // waktu reversal (dipilih) — read-only
+  const [delRevAt] = useState<string>(new Date().toISOString()); // read-only default
 
-  const openDelete = async (r: DepositRow) => {
+  const openDelete = async (r: UIRow) => {
     setDelRow(r);
     setDelNote("");
     setDelOpen(true);
     setDelBank(null);
-    setDelRevAt(new Date().toISOString()); // default saat modal dibuka (read-only)
     const { data: b } = await supabase
       .from("banks")
       .select("bank_code, account_name, account_no")
@@ -179,7 +334,7 @@ export default function DepositsTable() {
 
   const closeDelete = useCallback(() => setDelOpen(false), []);
 
-  // ESC untuk menutup modal
+  // ESC close
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && delOpen) {
@@ -197,7 +352,7 @@ export default function DepositsTable() {
       alert("Keterangan Penghapusan wajib diisi");
       return;
     }
-    // Reversal time tidak bisa diedit: server akan memakai waktu submit sebagai waktu real.
+    // Server akan mencatat waktu real saat ini; waktu reversal (dipilih) ditampilkan read‑only.
     const { error } = await supabase.rpc("delete_deposit", {
       p_deposit_id: delRow.id,
       p_delete_note: delNote.trim(),
@@ -208,8 +363,10 @@ export default function DepositsTable() {
     }
     setDelOpen(false);
     await load(page);
+    await loadToday(schema as "new" | "legacy");
   };
 
+  /** ===== Pagination helpers ===== */
   const canPrev = page > 1;
   const canNext = page < totalPages;
 
@@ -249,7 +406,7 @@ export default function DepositsTable() {
                 />
               </th>
               <th></th>
-              {/* ✨ Start/Finish atas-bawah, default = hari ini */}
+              {/* Start/Finish atas-bawah, default = hari ini */}
               <th>
                 <div className="flex flex-col gap-1">
                   <input
@@ -292,7 +449,6 @@ export default function DepositsTable() {
               <th className="text-left w-24">ID</th>
               <th className="text-left min-w-[220px]">Lead</th>
               <th className="text-left min-w-[180px]">Player</th>
-              {/* Amount rata kiri */}
               <th className="text-left w-32">Amount</th>
               <th className="text-left w-52">Tgl (dipilih)</th>
               <th className="text-left w-32">By</th>
@@ -301,7 +457,11 @@ export default function DepositsTable() {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
+            {!schema ? (
+              <tr>
+                <td colSpan={8}>Detecting schema…</td>
+              </tr>
+            ) : loading ? (
               <tr>
                 <td colSpan={8}>Loading…</td>
               </tr>
@@ -314,18 +474,17 @@ export default function DepositsTable() {
                 <tr key={r.id}>
                   <td>{r.id}</td>
                   <td className="whitespace-normal break-words">
-                    {r.lead_name_snapshot ?? "-"}
+                    {r.lead_name ?? "-"}
                   </td>
-                  <td>{r.username_snapshot}</td>
-                  {/* Amount rata kiri */}
+                  <td>{r.username ?? "-"}</td>
                   <td className="text-left">{formatAmount(r.amount_net)}</td>
                   <td>
-                    {new Date(r.txn_at_final).toLocaleString("id-ID", {
+                    {new Date(r.txn_selected).toLocaleString("id-ID", {
                       timeZone: "Asia/Jakarta",
                     })}
                   </td>
                   <td>{(r.created_by && creatorMap[r.created_by]) || r.created_by || "-"}</td>
-                  <td>{r.is_deleted ? "YES" : "NO"}</td>
+                  <td>{r.deleted ? "YES" : "NO"}</td>
                   <td className="space-x-2">
                     <Link
                       href={`/deposits/${r.id}`}
@@ -333,7 +492,7 @@ export default function DepositsTable() {
                     >
                       Detail
                     </Link>
-                    {!r.is_deleted && (
+                    {!r.deleted && (
                       <button
                         onClick={() => openDelete(r)}
                         className="rounded bg-red-600 text-white px-3 py-1"
@@ -430,7 +589,7 @@ export default function DepositsTable() {
                   </tr>
                   <tr>
                     <td>Player</td>
-                    <td>{delRow.username_snapshot}</td>
+                    <td>{delRow.username ?? "-"}</td>
                   </tr>
                   <tr>
                     <td>Jumlah (NET)</td>
@@ -438,13 +597,12 @@ export default function DepositsTable() {
                   </tr>
                   <tr>
                     <td>Direct Fee</td>
-                    <td>{formatAmount(delRow.fee_direct_amount)}</td>
+                    <td>{formatAmount(delRow.fee_amount)}</td>
                   </tr>
-                  {/* ✨ Tgl Transaksi (dipilih) + Real */}
                   <tr>
                     <td>Tgl Transaksi (dipilih)</td>
                     <td>
-                      {new Date(delRow.txn_at_final).toLocaleString("id-ID", {
+                      {new Date(delRow.txn_selected).toLocaleString("id-ID", {
                         timeZone: "Asia/Jakarta",
                       })}
                     </td>
@@ -452,18 +610,19 @@ export default function DepositsTable() {
                   <tr>
                     <td>Tgl Transaksi (Real)</td>
                     <td>
-                      {new Date(delRow.txn_at_opened).toLocaleString("id-ID", {
-                        timeZone: "Asia/Jakarta",
-                      })}
+                      {delRow.txn_real
+                        ? new Date(delRow.txn_real).toLocaleString("id-ID", {
+                            timeZone: "Asia/Jakarta",
+                          })
+                        : "-"}
                     </td>
                   </tr>
-                  {/* ✨ Tgl Reversal (dipilih) — read-only */}
                   <tr>
                     <td>Tgl Reversal (dipilih)</td>
                     <td>
                       {new Date(delRevAt).toLocaleString("id-ID", {
                         timeZone: "Asia/Jakarta",
-                      })}
+                      })}{" "}
                       <span className="text-gray-500 text-xs ml-2">
                         (auto, tidak bisa diubah)
                       </span>
