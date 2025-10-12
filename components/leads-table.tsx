@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
 type Lead = {
@@ -9,13 +9,17 @@ type Lead = {
   bank: string | null;
   bank_name: string | null;
   bank_no: string | null;
-  phone_number: string | null;
+  phone_number: string | null; // Whatsapp
   telp_invalid: boolean;
   username: string | null;
   registration_date: string;
 };
 
-const banks = ["ALL","BCA","BRI","BNI","MANDIRI","DANA","OVO","GOPAY","SHOPEEPAY"];
+const bankOptions = [
+  "BCA","BRI","BNI","MANDIRI","BSI","CIMB","PERMATA",
+  "SEABANK","JAGO","DANA","OVO","GOPAY","SHOPEEPAY",
+  "LINKAJA","SAKUKU","OTHER"
+];
 
 export default function LeadsTable() {
   const supabase = supabaseBrowser();
@@ -29,24 +33,28 @@ export default function LeadsTable() {
   const [start, setStart] = useState<string>("");
   const [finish, setFinish] = useState<string>("");
 
-  // form modal
+  // modal/form
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Lead | null>(null);
   const [form, setForm] = useState<Partial<Lead>>({});
 
+  // Helper: konversi tanggal (YYYY-MM-DD) ke ISO range sesuai zona "Asia/Jakarta"
+  const startIsoJakarta = (d: string) =>
+    new Date(`${d}T00:00:00+07:00`).toISOString();
+  const endIsoJakarta = (d: string) =>
+    new Date(`${d}T23:59:59.999+07:00`).toISOString();
+
   const load = async () => {
     setLoading(true);
-    let qy = supabase.from("leads").select("*").order("registration_date", {ascending: false}).limit(500);
+    let qy = supabase.from("leads").select("*")
+      .order("registration_date", {ascending: false})
+      .limit(500);
 
     if (bank && bank !== "ALL") qy = qy.eq("bank", bank);
     if (invalid === "YES") qy = qy.eq("telp_invalid", true);
     if (invalid === "NO")  qy = qy.eq("telp_invalid", false);
-    if (start) qy = qy.gte("registration_date", new Date(start).toISOString());
-    if (finish) {
-      const end = new Date(finish);
-      end.setDate(end.getDate()+1);
-      qy = qy.lt("registration_date", end.toISOString());
-    }
+    if (start) qy = qy.gte("registration_date", startIsoJakarta(start));
+    if (finish) qy = qy.lte("registration_date", endIsoJakarta(finish));
     if (q) {
       const like = `%${q}%`;
       qy = qy.or(`name.ilike.${like},username.ilike.${like},phone_number.ilike.${like},bank_name.ilike.${like},bank_no.ilike.${like}`);
@@ -61,29 +69,49 @@ export default function LeadsTable() {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
   const onSubmitFilter = (e: React.FormEvent) => { e.preventDefault(); load(); };
 
-  const openNew = () => { setEditing(null); setForm({ telp_invalid: false }); setShowForm(true); };
-  const openEdit = (r: Lead) => { setEditing(r); setForm(r); setShowForm(true); };
+  const openNew = () => {
+    setEditing(null);
+    setForm({ username: "", name: "", bank_name: "", bank: "", bank_no: "", phone_number: "" });
+    setShowForm(true);
+  };
+  const openEdit = (r: Lead) => {
+    setEditing(r);
+    setForm(r);
+    setShowForm(true);
+  };
+
+  const closeModal = useCallback(() => setShowForm(false), []);
+
+  // ESC key to close
+  useEffect(() => {
+    if (!showForm) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeModal();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [showForm, closeModal]);
 
   const save = async () => {
-    // Ambil tenant_id user dari profiles agar insert/update lolos RLS
+    // tenant_id dari profile (untuk insert)
     const { data: { user } } = await supabase.auth.getUser();
     const { data: prof, error: eProf } = await supabase
       .from("profiles").select("tenant_id").eq("user_id", user?.id).single();
     if (eProf) { alert(eProf.message); return; }
 
     const payload: any = {
-      name: form.name,
-      bank: form.bank ?? null,
-      bank_name: form.bank_name ?? null,
-      bank_no: form.bank_no ?? null,
-      phone_number: form.phone_number ?? null,
-      telp_invalid: !!form.telp_invalid,
       username: form.username ?? null,
-      registration_date: form.registration_date ?? new Date().toISOString(),
+      name: form.name,
+      bank_name: form.bank_name ?? null,
+      bank: form.bank ?? null,
+      bank_no: form.bank_no ?? null,
+      phone_number: form.phone_number ?? null, // Whatsapp
+      // telp_invalid: default false di DB → tidak perlu dikirim
+      // registration_date: default now() di DB (UTC) → tidak perlu dikirim
       tenant_id: prof?.tenant_id
     };
 
@@ -106,13 +134,14 @@ export default function LeadsTable() {
       <form onSubmit={onSubmitFilter} className="flex flex-wrap items-end gap-2">
         <div>
           <label className="block text-xs mb-1">Search</label>
-          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="name / username / phone"
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="name / username / whatsapp"
             className="border rounded px-3 py-2 w-64"/>
         </div>
         <div>
           <label className="block text-xs mb-1">Bank</label>
           <select value={bank} onChange={e=>setBank(e.target.value)} className="border rounded px-3 py-2">
-            {banks.map(b=><option key={b} value={b}>{b}</option>)}
+            <option value="ALL">ALL</option>
+            {bankOptions.map(b=><option key={b} value={b}>{b}</option>)}
           </select>
         </div>
         <div>
@@ -146,7 +175,7 @@ export default function LeadsTable() {
               <th className="text-left p-2 w-32">Bank</th>
               <th className="text-left p-2 w-56">Bank Name</th>
               <th className="text-left p-2 w-48">Bank No</th>
-              <th className="text-left p-2 w-44">Phone Number</th>
+              <th className="text-left p-2 w-44">Whatsapp</th>
               <th className="text-left p-2 w-32">Telp Invalid?</th>
               <th className="text-left p-2 w-40">Username</th>
               <th className="text-left p-2 w-48">Registration Date</th>
@@ -168,7 +197,9 @@ export default function LeadsTable() {
                 <td className="p-2">{r.phone_number ?? "-"}</td>
                 <td className="p-2">{r.telp_invalid ? "YES" : "NO"}</td>
                 <td className="p-2">{r.username ?? "-"}</td>
-                <td className="p-2">{new Date(r.registration_date).toLocaleString()}</td>
+                <td className="p-2">
+                  {new Date(r.registration_date).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}
+                </td>
                 <td className="p-2">
                   <button onClick={()=>openEdit(r)} className="rounded bg-gray-100 px-3 py-1">Edit</button>
                 </td>
@@ -180,22 +211,29 @@ export default function LeadsTable() {
 
       {/* Modal Form */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-4">
+        <div
+          className="fixed inset-0 bg-black/30 flex items-center justify-center p-4"
+          onMouseDown={(e) => {
+            if (e.currentTarget === e.target) closeModal(); // klik area luar modal → close
+          }}
+        >
           <div className="bg-white rounded border w-full max-w-2xl">
             <div className="p-4 border-b flex justify-between items-center">
               <div className="font-semibold">{editing ? "Edit Lead" : "New Lead"}</div>
-              <button onClick={()=>setShowForm(false)} className="text-sm">✕</button>
+              <button onClick={closeModal} className="text-sm">✕</button>
             </div>
+
+            {/* Susunan form sesuai instruksi */}
             <div className="p-4 grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs mb-1">Username</label>
+                <input className="border rounded px-3 py-2 w-full"
+                  value={form.username ?? ""} onChange={e=>setForm(p=>({...p, username:e.target.value}))}/>
+              </div>
               <div>
                 <label className="block text-xs mb-1">Name</label>
                 <input className="border rounded px-3 py-2 w-full"
                   value={form.name ?? ""} onChange={e=>setForm(p=>({...p, name:e.target.value}))}/>
-              </div>
-              <div>
-                <label className="block text-xs mb-1">Bank</label>
-                <input className="border rounded px-3 py-2 w-full" placeholder="BCA/BRI/DANA…"
-                  value={form.bank ?? ""} onChange={e=>setForm(p=>({...p, bank:e.target.value}))}/>
               </div>
               <div>
                 <label className="block text-xs mb-1">Bank Name</label>
@@ -203,37 +241,27 @@ export default function LeadsTable() {
                   value={form.bank_name ?? ""} onChange={e=>setForm(p=>({...p, bank_name:e.target.value}))}/>
               </div>
               <div>
+                <label className="block text-xs mb-1">Bank</label>
+                <select className="border rounded px-3 py-2 w-full"
+                  value={form.bank ?? ""} onChange={e=>setForm(p=>({...p, bank:e.target.value}))}>
+                  <option value="">Pilih bank</option>
+                  {bankOptions.map(b => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </div>
+              <div>
                 <label className="block text-xs mb-1">Bank No</label>
                 <input className="border rounded px-3 py-2 w-full"
                   value={form.bank_no ?? ""} onChange={e=>setForm(p=>({...p, bank_no:e.target.value}))}/>
               </div>
               <div>
-                <label className="block text-xs mb-1">Phone Number</label>
-                <input className="border rounded px-3 py-2 w-full"
+                <label className="block text-xs mb-1">Whatsapp</label>
+                <input className="border rounded px-3 py-2 w-full" placeholder="08xxxxxxxxxx"
                   value={form.phone_number ?? ""} onChange={e=>setForm(p=>({...p, phone_number:e.target.value}))}/>
               </div>
-              <div className="flex items-center gap-2 mt-6">
-                <input id="invalid" type="checkbox"
-                  checked={!!form.telp_invalid}
-                  onChange={e=>setForm(p=>({...p, telp_invalid:e.target.checked}))}/>
-                <label htmlFor="invalid" className="text-sm">Telp Invalid?</label>
-              </div>
-              <div>
-                <label className="block text-xs mb-1">Username</label>
-                <input className="border rounded px-3 py-2 w-full"
-                  value={form.username ?? ""} onChange={e=>setForm(p=>({...p, username:e.target.value}))}/>
-              </div>
-              <div>
-                <label className="block text-xs mb-1">Registration Date</label>
-                <input type="datetime-local" className="border rounded px-3 py-2 w-full"
-                  value={form.registration_date
-                    ? new Date(form.registration_date as any).toISOString().slice(0,16)
-                    : new Date().toISOString().slice(0,16)}
-                  onChange={e=>setForm(p=>({...p, registration_date:new Date(e.target.value).toISOString()}))}/>
-              </div>
             </div>
+
             <div className="border-t p-4 flex justify-end gap-2">
-              <button onClick={()=>setShowForm(false)} className="rounded px-4 py-2 bg-gray-100">Cancel</button>
+              <button onClick={closeModal} className="rounded px-4 py-2 bg-gray-100">Cancel</button>
               <button onClick={save} className="rounded px-4 py-2 bg-blue-600 text-white">Save</button>
             </div>
           </div>
