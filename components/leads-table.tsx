@@ -548,9 +548,6 @@ export default function LeadsTable() {
                     setForm((p) => ({ ...p, username: e.target.value }))
                   }
                 />
-                <p className="text-[11px] text-gray-500 mt-1">
-                  *Akan di-trim & disimpan sebagai lowercase.
-                </p>
               </div>
               <div>
                 <label className="block text-xs mb-1">Name</label>
@@ -561,9 +558,6 @@ export default function LeadsTable() {
                     setForm((p) => ({ ...p, name: e.target.value }))
                   }
                 />
-                <p className="text-[11px] text-gray-500 mt-1">
-                  *Akan di-trim & disimpan sebagai UPPERCASE.
-                </p>
               </div>
               <div>
                 <label className="block text-xs mb-1">Bank Name</label>
@@ -574,9 +568,6 @@ export default function LeadsTable() {
                     setForm((p) => ({ ...p, bank_name: e.target.value }))
                   }
                 />
-                <p className="text-[11px] text-gray-500 mt-1">
-                  *Akan di-trim & disimpan sebagai UPPERCASE.
-                </p>
               </div>
               <div>
                 <label className="block text-xs mb-1">Bank</label>
@@ -621,9 +612,6 @@ export default function LeadsTable() {
                     setForm((p) => ({ ...p, bank_no: e.target.value }))
                   }
                 />
-                <p className="text-[11px] text-gray-500 mt-1">
-                  *Tidak boleh duplikat dalam tenant.
-                </p>
               </div>
               <div>
                 <label className="block text-xs mb-1">Whatsapp</label>
@@ -635,9 +623,6 @@ export default function LeadsTable() {
                     setForm((p) => ({ ...p, phone_number: e.target.value }))
                   }
                 />
-                <p className="text-[11px] text-gray-500 mt-1">
-                  *Tidak boleh duplikat dalam tenant.
-                </p>
               </div>
             </div>
 
