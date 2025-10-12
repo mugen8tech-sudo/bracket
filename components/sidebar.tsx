@@ -24,13 +24,6 @@ export default function Sidebar() {
     { label: "Credit Mutation", href: "#", enabled: false },
     { label: "Credit Report", href: "#", enabled: false },
     { label: "User Management", href: "#", enabled: false },
-    { label: "Port Number", href: "#", enabled: false },
-    { label: "New Member", href: "#", enabled: false },
-    { label: "My Members", href: "#", enabled: false },
-    { label: "Player Request", href: "#", enabled: false },
-    { label: "SPV Depo Request", href: "#", enabled: false },
-    { label: "WD List", href: "#", enabled: false },
-    { label: "CRM Member", href: "#", enabled: false },
   ];
 
   return (
