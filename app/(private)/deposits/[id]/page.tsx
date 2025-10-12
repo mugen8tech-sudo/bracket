@@ -103,7 +103,7 @@ export default async function DepositDetailPage({
           <tbody>
             <tr>
               <td className="w-56">Lead</td>
-              <td>{dep.lead?.name ?? "-"}</td>
+              <td>{dep.lead?.[0]?.name ?? "-"}</td>
             </tr>
             <tr>
               <td>Player</td>
@@ -112,8 +112,8 @@ export default async function DepositDetailPage({
             <tr>
               <td>Receiver Bank</td>
               <td>
-                [{dep.bank?.bank_code}] {dep.bank?.account_name} -{" "}
-                {dep.bank?.account_no}
+                [{dep.bank?.[0]?.bank_code}] {dep.bank?.[0]?.account_name}
+                {dep.bank?.[0]?.account_no}
               </td>
             </tr>
             <tr>
@@ -151,7 +151,7 @@ export default async function DepositDetailPage({
             </tr>
             <tr>
               <td>Website</td>
-              <td>{dep.tenant?.name ?? "-"}</td>
+              <td>{dep.tenant?.[0]?.name ?? "-"}</td>
             </tr>
             <tr>
               <td>By</td>
