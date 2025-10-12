@@ -61,7 +61,7 @@ export default function LeadsTable() {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, []);
 
   const onSubmitFilter = (e: React.FormEvent) => { e.preventDefault(); load(); };
 
@@ -69,7 +69,7 @@ export default function LeadsTable() {
   const openEdit = (r: Lead) => { setEditing(r); setForm(r); setShowForm(true); };
 
   const save = async () => {
-    // Ambil tenant_id user dari profiles
+    // Ambil tenant_id user dari profiles agar insert/update lolos RLS
     const { data: { user } } = await supabase.auth.getUser();
     const { data: prof, error: eProf } = await supabase
       .from("profiles").select("tenant_id").eq("user_id", user?.id).single();
