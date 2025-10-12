@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, FormEvent } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
 type Lead = {
@@ -159,27 +159,101 @@ export default function LeadsTable() {
     return () => document.removeEventListener("keydown", onKey);
   }, [showForm, closeModal]);
 
+  // ---------- Normalisasi untuk guard ----------
+  const toNull = (v?: string | null) =>
+    typeof v === "string" ? (v.trim() === "" ? null : v.trim()) : v ?? null;
+
+  const normalizeForDB = (f: Partial<Lead>) => {
+    const username = toNull(f.username)?.toLowerCase() ?? null; // trim + lowercase
+    const name = (typeof f.name === "string" ? f.name.trim().toUpperCase() : "") as string; // selalu uppercase; biarkan "" bila kosong (sesuai skema not null)
+    const bank_name = toNull(f.bank_name)?.toUpperCase() ?? null; // selalu uppercase bila ada
+    const bank = toNull(f.bank) ?? null;
+    const bank_no = toNull(f.bank_no) ?? null; // trim
+    const phone_number = toNull(f.phone_number) ?? null; // trim
+    return { username, name, bank_name, bank, bank_no, phone_number };
+  };
+
+  // ---------- Cek duplikat (ramah UX; DB juga tetap dijaga oleh trigger opsional) ----------
+  const preflightDuplicateCheck = async (tenantId: string, norm: ReturnType<typeof normalizeForDB>, excludeId?: number) => {
+    const errors: string[] = [];
+
+    // username (case-insensitive exact match)
+    if (norm.username) {
+      const { count, error } = await supabase
+        .from("leads")
+        .select("id", { count: "exact" })
+        .eq("tenant_id", tenantId)
+        .ilike("username", norm.username) // exact match, case-insensitive (tanpa wildcard)
+        .neq(excludeId ? "id" : "id", excludeId ?? 0) // jika excludeId ada, akan mengecualikan row itu
+        .limit(1);
+      if (error) return { ok: false, errors: [error.message] };
+      if ((count ?? 0) > 0) errors.push("Username sudah digunakan di tenant ini.");
+    }
+
+    // bank_no
+    if (norm.bank_no) {
+      const { count, error } = await supabase
+        .from("leads")
+        .select("id", { count: "exact" })
+        .eq("tenant_id", tenantId)
+        .eq("bank_no", norm.bank_no)
+        .neq(excludeId ? "id" : "id", excludeId ?? 0)
+        .limit(1);
+      if (error) return { ok: false, errors: [error.message] };
+      if ((count ?? 0) > 0) errors.push("Nomor rekening (bank_no) sudah terdaftar di tenant ini.");
+    }
+
+    // phone_number
+    if (norm.phone_number) {
+      const { count, error } = await supabase
+        .from("leads")
+        .select("id", { count: "exact" })
+        .eq("tenant_id", tenantId)
+        .eq("phone_number", norm.phone_number)
+        .neq(excludeId ? "id" : "id", excludeId ?? 0)
+        .limit(1);
+      if (error) return { ok: false, errors: [error.message] };
+      if ((count ?? 0) > 0) errors.push("Nomor WhatsApp sudah terdaftar di tenant ini.");
+    }
+
+    return { ok: errors.length === 0, errors };
+  };
+
   const save = async () => {
     // tenant_id dari profiles
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user }, error: authErr } = await supabase.auth.getUser();
+    if (authErr || !user) {
+      alert(authErr?.message || "Harap login kembali.");
+      return;
+    }
+
     const { data: prof, error: eProf } = await supabase
       .from("profiles")
       .select("tenant_id")
-      .eq("user_id", user?.id)
+      .eq("user_id", user.id)
       .single();
-    if (eProf) {
-      alert(eProf.message);
+    if (eProf || !prof?.tenant_id) {
+      alert(eProf?.message || "Tenant tidak ditemukan pada profile.");
+      return;
+    }
+
+    // normalisasi sebelum kirim ke DB (sesuai requirement)
+    const norm = normalizeForDB(form);
+
+    // pre-flight duplicate check untuk UX yang lebih jelas
+    const { ok, errors } = await preflightDuplicateCheck(
+      prof.tenant_id,
+      norm,
+      editing?.id
+    );
+    if (!ok) {
+      alert(errors.join("\n"));
       return;
     }
 
     const payload: any = {
-      username: form.username ?? null,
-      name: form.name,
-      bank_name: form.bank_name ?? null,
-      bank: form.bank ?? null,
-      bank_no: form.bank_no ?? null,
-      phone_number: form.phone_number ?? null, // Whatsapp
-      tenant_id: prof?.tenant_id, // RLS check
+      ...norm,
+      tenant_id: prof.tenant_id, // RLS check
     };
 
     let error;
@@ -201,17 +275,17 @@ export default function LeadsTable() {
     }
 
     if (error) {
+      // Jika nantinya ada constraint/trigger DB, error akan muncul di sini juga
       alert(error.message);
       return;
     }
     setShowForm(false);
-    // Jika record baru, kemungkinan muncul di halaman 1 (karena sort desc)
-    // supaya langsung terlihat, kembali ke halaman 1
+    // Jika record baru, sort desc by date -> biasanya muncul di halaman 1
     if (!editing) await load(1);
     else await load(page);
   };
 
-  const onSubmitModal: React.FormEventHandler<HTMLFormElement> = async (e) => {
+  const onSubmitModal = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault(); // ENTER akan men-submit form
     await save();
   };
@@ -447,10 +521,7 @@ export default function LeadsTable() {
         >
           {/* posisi lebih ke atas */}
           <form
-            onSubmit={(e) => {
-              e.preventDefault(); // ENTER akan men-submit form
-              save();
-            }}
+            onSubmit={onSubmitModal}
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
             <div className="p-4 border-b flex justify-between items-center">
@@ -477,6 +548,9 @@ export default function LeadsTable() {
                     setForm((p) => ({ ...p, username: e.target.value }))
                   }
                 />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  *Akan di-trim & disimpan sebagai lowercase.
+                </p>
               </div>
               <div>
                 <label className="block text-xs mb-1">Name</label>
@@ -487,6 +561,9 @@ export default function LeadsTable() {
                     setForm((p) => ({ ...p, name: e.target.value }))
                   }
                 />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  *Akan di-trim & disimpan sebagai UPPERCASE.
+                </p>
               </div>
               <div>
                 <label className="block text-xs mb-1">Bank Name</label>
@@ -497,6 +574,9 @@ export default function LeadsTable() {
                     setForm((p) => ({ ...p, bank_name: e.target.value }))
                   }
                 />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  *Akan di-trim & disimpan sebagai UPPERCASE.
+                </p>
               </div>
               <div>
                 <label className="block text-xs mb-1">Bank</label>
@@ -541,6 +621,9 @@ export default function LeadsTable() {
                     setForm((p) => ({ ...p, bank_no: e.target.value }))
                   }
                 />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  *Tidak boleh duplikat dalam tenant.
+                </p>
               </div>
               <div>
                 <label className="block text-xs mb-1">Whatsapp</label>
@@ -552,6 +635,9 @@ export default function LeadsTable() {
                     setForm((p) => ({ ...p, phone_number: e.target.value }))
                   }
                 />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  *Tidak boleh duplikat dalam tenant.
+                </p>
               </div>
             </div>
 
