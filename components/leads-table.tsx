@@ -10,17 +10,22 @@ type Lead = {
   bank_name: string | null;
   bank_no: string | null;
   phone_number: string | null; // Whatsapp
-  telp_invalid: boolean;
+  telp_invalid: boolean;       // ada di DB, tidak ditampilkan
   username: string | null;
   registration_date: string;
 };
 
+const PAGE_SIZE = 25; // <= permintaan: khusus Leads 25 baris/halaman
+
 export default function LeadsTable() {
   const supabase = supabaseBrowser();
 
-  // ---------- data ----------
+  // ---------- data & pagination ----------
   const [rows, setRows] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0); // total rows (untuk hitung total pages)
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   // ---------- FILTERS (baris di atas header) ----------
   const [fId, setFId] = useState<string>("");
@@ -39,41 +44,83 @@ export default function LeadsTable() {
   const endIsoJakarta = (d: string) =>
     new Date(`${d}T23:59:59.999+07:00`).toISOString();
 
-  const load = async () => {
-    setLoading(true);
-    let qy = supabase
+  const buildQuery = () => {
+    let q = supabase
       .from("leads")
-      .select("*")
-      .order("registration_date", { ascending: false })
-      .limit(500);
+      .select("*", { count: "exact" }) // butuh count untuk pagination
+      .order("registration_date", { ascending: false });
 
     if (fId.trim()) {
       const asNum = Number(fId.trim());
-      if (!Number.isNaN(asNum)) qy = qy.eq("id", asNum);
+      if (!Number.isNaN(asNum)) q = q.eq("id", asNum);
     }
-    if (fName.trim()) qy = qy.ilike("name", `%${fName.trim()}%`);
-    if (fBank.trim()) qy = qy.ilike("bank", `%${fBank.trim()}%`);
-    if (fBankName.trim()) qy = qy.ilike("bank_name", `%${fBankName.trim()}%`);
-    if (fBankNo.trim()) qy = qy.ilike("bank_no", `%${fBankNo.trim()}%`);
-    if (fWhatsapp.trim()) qy = qy.ilike("phone_number", `%${fWhatsapp.trim()}%`);
-    if (fUsername.trim()) qy = qy.ilike("username", `%${fUsername.trim()}%`);
-    if (fStart) qy = qy.gte("registration_date", startIsoJakarta(fStart));
-    if (fFinish) qy = qy.lte("registration_date", endIsoJakarta(fFinish));
+    if (fName.trim()) q = q.ilike("name", `%${fName.trim()}%`);
+    if (fBank.trim()) q = q.ilike("bank", `%${fBank.trim()}%`);
+    if (fBankName.trim()) q = q.ilike("bank_name", `%${fBankName.trim()}%`);
+    if (fBankNo.trim()) q = q.ilike("bank_no", `%${fBankNo.trim()}%`);
+    if (fWhatsapp.trim()) q = q.ilike("phone_number", `%${fWhatsapp.trim()}%`);
+    if (fUsername.trim()) q = q.ilike("username", `%${fUsername.trim()}%`);
+    if (fStart) q = q.gte("registration_date", startIsoJakarta(fStart));
+    if (fFinish) q = q.lte("registration_date", endIsoJakarta(fFinish));
 
-    const { data, error } = await qy;
+    return q;
+  };
+
+  const load = async (pageToLoad = page) => {
+    setLoading(true);
+    const from = (pageToLoad - 1) * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    let q = buildQuery().range(from, to);
+
+    const { data, error, count } = await q;
     setLoading(false);
-    if (error) alert(error.message);
-    else setRows((data as Lead[]) ?? []);
+    if (error) {
+      alert(error.message);
+    } else {
+      setRows((data as Lead[]) ?? []);
+      setTotal(count ?? 0);
+      setPage(pageToLoad);
+    }
   };
 
   useEffect(() => {
-    load();
+    load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const applyFilters = (e?: React.FormEvent) => {
     e?.preventDefault();
-    load();
+    load(1); // setiap ganti filter -> mulai dari halaman 1
+  };
+
+  // ---------- pagination controls ----------
+  const canPrev = page > 1;
+  const canNext = page < totalPages;
+
+  const goFirst = () => canPrev && load(1);
+  const goPrev = () => canPrev && load(page - 1);
+  const goNext = () => canNext && load(page + 1);
+  const goLast = () => canNext && load(totalPages);
+
+  // buat daftar nomor halaman (dengan token "truncate" di tengah bila panjang)
+  const getPageList = () => {
+    const list: (number | "truncate")[] = [];
+    if (totalPages <= 10) {
+      for (let i = 1; i <= totalPages; i++) list.push(i);
+      return list;
+    }
+    if (page <= 6) {
+      list.push(1, 2, 3, 4, 5, 6, "truncate", totalPages);
+      return list;
+    }
+    if (page >= totalPages - 5) {
+      list.push(1, "truncate");
+      for (let i = totalPages - 5; i <= totalPages; i++) list.push(i);
+      return list;
+    }
+    list.push(1, "truncate", page - 1, page, page + 1, "truncate", totalPages);
+    return list;
   };
 
   // ---------- Modal ----------
@@ -158,11 +205,14 @@ export default function LeadsTable() {
       return;
     }
     setShowForm(false);
-    await load();
+    // Jika record baru, kemungkinan muncul di halaman 1 (karena sort desc)
+    // supaya langsung terlihat, kembali ke halaman 1
+    if (!editing) await load(1);
+    else await load(page);
   };
 
   const onSubmitModal: React.FormEventHandler<HTMLFormElement> = async (e) => {
-    e.preventDefault(); // ENTER akan memicu event ini
+    e.preventDefault(); // ENTER akan men-submit form
     await save();
   };
 
@@ -331,6 +381,62 @@ export default function LeadsTable() {
         </table>
       </div>
 
+      {/* ---------- Pagination ---------- */}
+      <div className="flex justify-center">
+        <nav className="inline-flex items-center gap-1 text-sm select-none">
+          <button
+            onClick={goFirst}
+            disabled={!canPrev}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            First
+          </button>
+          <button
+            onClick={goPrev}
+            disabled={!canPrev}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Previous
+          </button>
+
+          {getPageList().map((it, idx) =>
+            it === "truncate" ? (
+              <span
+                key={`t-${idx}`}
+                className="px-3 py-1 rounded border bg-white text-gray-500"
+              >
+                Truncate
+              </span>
+            ) : (
+              <button
+                key={it}
+                onClick={() => load(it)}
+                className={`px-3 py-1 rounded border ${
+                  page === it ? "bg-blue-600 text-white" : "bg-white"
+                }`}
+              >
+                {it}
+              </button>
+            )
+          )}
+
+          <button
+            onClick={goNext}
+            disabled={!canNext}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Next
+          </button>
+          <button
+            onClick={goLast}
+            disabled={!canNext}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Last
+          </button>
+        </nav>
+      </div>
+
       {/* ---------- Modal ---------- */}
       {showForm && (
         <div
@@ -341,7 +447,10 @@ export default function LeadsTable() {
         >
           {/* posisi lebih ke atas */}
           <form
-            onSubmit={onSubmitModal}
+            onSubmit={(e) => {
+              e.preventDefault(); // ENTER akan men-submit form
+              save();
+            }}
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
             <div className="p-4 border-b flex justify-between items-center">
@@ -455,7 +564,7 @@ export default function LeadsTable() {
                 Cancel
               </button>
               <button
-                type="submit" // ENTER akan men-submit form
+                type="submit"
                 className="rounded px-4 py-2 bg-blue-600 text-white"
               >
                 Save
