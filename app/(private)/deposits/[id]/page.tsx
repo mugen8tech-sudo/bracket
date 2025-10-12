@@ -148,9 +148,6 @@ export default async function DepositDetailPage({
               <td>Credit Hit Basis</td>
               <td>
                 <b>{dep.credit_basis}</b>{" "}
-                <span className="text-xs text-gray-500">
-                  (NET → kurangi credit sebesar net; GROSS → sebesar gross)
-                </span>
               </td>
             </tr>
             <tr>
