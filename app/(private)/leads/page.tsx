@@ -1,3 +1,7 @@
+// Hindari prerender statis agar selalu memeriksa sesi
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import LeadsTable from "@/components/leads-table";
 
 export default function LeadsPage() {
