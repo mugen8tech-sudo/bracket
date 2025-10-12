@@ -623,9 +623,6 @@ export default function DepositsTable() {
                       {new Date(delRevAt).toLocaleString("id-ID", {
                         timeZone: "Asia/Jakarta",
                       })}{" "}
-                      <span className="text-gray-500 text-xs ml-2">
-                        (auto, tidak bisa diubah)
-                      </span>
                     </td>
                   </tr>
                 </tbody>
