@@ -11,7 +11,7 @@ export default function Sidebar() {
   const items: { label: string; href: string; enabled?: boolean }[] = [
     { label: "Leads", href: "/leads", enabled: true },
     { label: "Banks", href: "/banks", enabled: true },
-    { label: "Deposits", href: "#", enabled: false },
+    { label: "Deposits", href: "/deposits", enabled: true },
     { label: "Withdrawals", href: "#", enabled: false },
     { label: "Pending Deposits", href: "#", enabled: false },
     { label: "Interbank Transfer", href: "#", enabled: false },
