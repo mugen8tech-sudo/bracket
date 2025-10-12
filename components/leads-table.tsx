@@ -213,7 +213,7 @@ export default function LeadsTable() {
         .neq(excludeId ? "id" : "id", excludeId ?? 0)
         .limit(1);
       if (error) return { ok: false, errors: [error.message] };
-      if ((count ?? 0) > 0) errors.push("Nomor WhatsApp sudah terdaftar di tenant ini.");
+      if ((count ?? 0) > 0) errors.push("Nomor WhatsApp sudah terdaftar.");
     }
 
     return { ok: errors.length === 0, errors };
