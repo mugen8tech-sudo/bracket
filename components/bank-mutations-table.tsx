@@ -1,0 +1,430 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabaseBrowser } from "@/lib/supabase-browser";
+import { formatAmount } from "@/lib/format";
+
+type MutationKind =
+  | "DEPOSIT" | "REVERSAL_DEPOSIT"
+  | "WITHDRAWAL" | "REVERSAL_WITHDRAWAL"
+  | "PENDING_DEPOSIT"
+  | "INTERBANK_OUT" | "INTERBANK_IN"
+  | "ADJUSTMENT"
+  | "EXPENSE";
+
+type BankMutationRow = {
+  id: number;
+  tenant_id: string;
+  bank_id: number;
+  deposit_id: number | null;
+  kind: MutationKind;
+  amount: number;
+  balance_before: number;
+  balance_after: number;
+  txn_at: string;        // waktu dipilih (backdate)
+  performed_at: string;  // waktu klik (real)
+  description: string | null;
+  created_by: string | null;
+};
+
+type BankLite = {
+  id: number;
+  bank_code: string;
+  account_name: string;
+  account_no: string;
+  is_active: boolean;
+};
+
+type DepositLite = {
+  id: number;
+  username: string;
+  lead_id: number | null;
+  performed_at: string; // waktu real saat dibuat (untuk tag reversal)
+};
+
+type LeadLite = { id: number; name: string | null };
+type ProfileLite = { user_id: string; full_name: string };
+
+const PAGE_SIZE = 50;
+
+const CAT_OPTIONS = [
+  { key: "ALL", label: "All" },
+  { key: "DEPO", label: "Depo" },
+  { key: "WD", label: "WD" },
+  { key: "PENDING_DP", label: "Pending DP" },
+  { key: "SESAMA_CM", label: "Sesama CM" },
+  { key: "ADJ", label: "Adjustment" },
+  { key: "EXPENSE", label: "Expense" },
+  { key: "TRANSFER_FEE", label: "Biaya Transfer" },
+] as const;
+type CatKey = typeof CAT_OPTIONS[number]["key"];
+
+function kindsForCat(cat: CatKey): MutationKind[] | "EXPENSE_TRANSFER" | "ALL" {
+  switch (cat) {
+    case "DEPO": return ["DEPOSIT", "REVERSAL_DEPOSIT"];
+    case "WD": return ["WITHDRAWAL", "REVERSAL_WITHDRAWAL"];
+    case "PENDING_DP": return ["PENDING_DEPOSIT"];
+    case "SESAMA_CM": return ["INTERBANK_OUT", "INTERBANK_IN"];
+    case "ADJ": return ["ADJUSTMENT"];
+    case "EXPENSE": return ["EXPENSE"];          // nanti dipilah: bukan transfer fee
+    case "TRANSFER_FEE": return "EXPENSE_TRANSFER";
+    default: return "ALL";
+  }
+}
+
+function labelCat(kind: MutationKind): string {
+  if (kind === "DEPOSIT" || kind === "REVERSAL_DEPOSIT") return "Depo";
+  if (kind === "WITHDRAWAL" || kind === "REVERSAL_WITHDRAWAL") return "WD";
+  if (kind === "PENDING_DEPOSIT") return "Pending DP";
+  if (kind === "INTERBANK_OUT" || kind === "INTERBANK_IN") return "Sesama CM";
+  if (kind === "ADJUSTMENT") return "Adjustment";
+  return "Expense";
+}
+
+function startOfDayJakartaISO(d: string) {
+  return new Date(`${d}T00:00:00+07:00`).toISOString();
+}
+function endOfDayJakartaISO(d: string) {
+  return new Date(`${d}T23:59:59.999+07:00`).toISOString();
+}
+
+function isTransferFee(desc?: string | null) {
+  if (!desc) return false;
+  const s = desc.toLowerCase();
+  return (
+    s.includes("biaya transfer") ||
+    s.includes("transfer fee") ||
+    s.includes("fee transfer") ||
+    s.includes("fee wd") ||
+    s.includes("wd fee") ||
+    s.includes("tt fee") ||
+    s.includes("interbank fee")
+  );
+}
+
+export default function BankMutationsTable() {
+  const supabase = supabaseBrowser();
+
+  // data
+  const [banks, setBanks] = useState<BankLite[]>([]);
+  const [rows, setRows] = useState<BankMutationRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  // lookups
+  const [depositMap, setDepositMap] = useState<Record<number, DepositLite>>({});
+  const [leadMap, setLeadMap] = useState<Record<number, LeadLite>>({});
+  const [creatorMap, setCreatorMap] = useState<Record<string, string>>({});
+
+  // filters
+  const [fId, setFId] = useState("");
+  const [fStart, setFStart] = useState("");
+  const [fFinish, setFFinish] = useState("");
+  const [fCat, setFCat] = useState<CatKey>("ALL");
+  const [fBankId, setFBankId] = useState<number | "">("");
+  const [fDesc, setFDesc] = useState("");
+
+  // load daftar bank tenant (aktif & non-aktif)
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: prof } = await supabase
+        .from("profiles").select("tenant_id").eq("user_id", user?.id).single();
+      const t = prof?.tenant_id;
+      if (t) {
+        const { data } = await supabase
+          .from("banks")
+          .select("id, bank_code, account_name, account_no, is_active")
+          .eq("tenant_id", t)
+          .order("is_active", { ascending: false })
+          .order("id", { ascending: false });
+        setBanks((data as BankLite[]) ?? []);
+      }
+    })();
+  }, [supabase]);
+
+  // query utama
+  const load = async (pageToLoad = page) => {
+    setLoading(true);
+
+    let q = supabase
+      .from("bank_mutations")
+      .select("*", { count: "exact" })
+      .order("performed_at", { ascending: false });
+
+    // Filter Waktu Click (REAL)
+    if (fStart) q = q.gte("performed_at", startOfDayJakartaISO(fStart));
+    if (fFinish) q = q.lte("performed_at", endOfDayJakartaISO(fFinish));
+
+    // Filter ID
+    if (fId.trim()) {
+      const idn = Number(fId.trim());
+      if (!Number.isNaN(idn)) q = q.eq("id", idn);
+    }
+
+    // Filter kategori
+    const kinds = kindsForCat(fCat);
+    if (Array.isArray(kinds)) q = q.in("kind", kinds);
+    else if (kinds === "EXPENSE_TRANSFER") q = q.eq("kind", "EXPENSE");
+
+    // Filter bank
+    if (fBankId) q = q.eq("bank_id", Number(fBankId));
+
+    // Filter desc
+    if (fDesc.trim()) q = q.ilike("description", `%${fDesc.trim()}%`);
+
+    // paging
+    const from = (pageToLoad - 1) * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    const { data, error, count } = await q.range(from, to);
+    if (error) { setLoading(false); alert(error.message); return; }
+
+    // Pasca-filter Expense vs Biaya Transfer
+    let list = (data as BankMutationRow[]) ?? [];
+    if (kinds === "EXPENSE_TRANSFER") {
+      list = list.filter((r) => isTransferFee(r.description));
+    } else if (Array.isArray(kinds) && kinds.length === 1 && kinds[0] === "EXPENSE" && fCat === "EXPENSE") {
+      list = list.filter((r) => !isTransferFee(r.description));
+    }
+
+    setRows(list);
+    setTotal(count ?? list.length);
+    setPage(pageToLoad);
+
+    // lookups batch: deposit, creator, lead
+    const depositIds = Array.from(new Set(list.map(r => r.deposit_id).filter((v): v is number => !!v)));
+    const creatorIds = Array.from(new Set(list.map(r => r.created_by).filter((v): v is string => !!v)));
+
+    const [depRes, profRes] = await Promise.all([
+      depositIds.length
+        ? supabase.from("deposits").select("id, username, lead_id, performed_at").in("id", depositIds)
+        : Promise.resolve({ data: [] as any[] }),
+      creatorIds.length
+        ? supabase.from("profiles").select("user_id, full_name").in("user_id", creatorIds)
+        : Promise.resolve({ data: [] as any[] }),
+    ]);
+
+    const depList = (depRes.data as DepositLite[]) ?? [];
+    setDepositMap(Object.fromEntries(depList.map(d => [d.id, d])));
+
+    const leadIds = Array.from(new Set(depList.map(d => d.lead_id).filter((v): v is number => !!v)));
+    const leadList = leadIds.length ? ((await supabase.from("leads").select("id, name").in("id", leadIds)).data as LeadLite[] ?? []) : [];
+    setLeadMap(Object.fromEntries(leadList.map(l => [l.id, l])));
+
+    const profList = (profRes.data as ProfileLite[]) ?? [];
+    setCreatorMap(Object.fromEntries(profList.map(p => [p.user_id, p.full_name])));
+
+    setLoading(false);
+  };
+
+  useEffect(() => { load(1); /* initial */ }, []); // eslint-disable-line
+
+  const bankLabel = (id: number) => {
+    const b = banks.find(x => x.id === id);
+    if (!b) return "[]";
+    return `[${b.bank_code}] ${b.account_name} - ${b.account_no}`;
+  };
+
+  const extraInfo = (r: BankMutationRow): string => {
+    if (r.kind === "DEPOSIT") {
+      const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
+      const leadName = d?.lead_id ? (leadMap[d.lead_id]?.name ?? "") : "";
+      return `Depo dari ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
+    }
+    if (r.kind === "REVERSAL_DEPOSIT") {
+      const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
+      const leadName = d?.lead_id ? (leadMap[d.lead_id]?.name ?? "") : "";
+      return `Reversal Depo dari ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
+    }
+    if (r.kind === "WITHDRAWAL") {
+      const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
+      const leadName = d?.lead_id ? (leadMap[d.lead_id]?.name ?? "") : "";
+      return `WD ke ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
+    }
+    if (r.kind === "REVERSAL_WITHDRAWAL") {
+      const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
+      const leadName = d?.lead_id ? (leadMap[d.lead_id]?.name ?? "") : "";
+      return `Reversal WD ke ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
+    }
+    if (r.kind === "EXPENSE" && isTransferFee(r.description)) {
+      // fee transfer khusus
+      const s = (r.description || "").toLowerCase();
+      if (s.includes("wd")) {
+        const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
+        return `Fee WD dari ${d?.username ?? "-"}`;
+      }
+      if (s.includes("tt") || s.includes("interbank")) {
+        const b = banks.find(x => x.id === r.bank_id);
+        return `Fee Sesama CM dari ${b ? `[${b.bank_code}] ${b.account_name}` : "-"}`;
+      }
+      return `Biaya Transfer`;
+    }
+    return r.description ?? "-";
+  };
+
+  const reversalTag = (r: BankMutationRow) => {
+    if (r.kind !== "REVERSAL_DEPOSIT" && r.kind !== "REVERSAL_WITHDRAWAL") return null;
+    const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
+    const madeAt = d?.performed_at
+      ? new Date(d.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
+      : "-";
+    return `[REVERSAL-${madeAt}]`;
+  };
+
+  const totalPagesTxt = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded border bg-white p-3">
+        <b>Bank Mutations</b>
+      </div>
+
+      <div className="overflow-auto rounded border bg-white">
+        <table className="table-grid min-w-[1250px]" style={{ borderCollapse: "collapse" }}>
+          <thead>
+            {/* FILTER BARIS ATAS */}
+            <tr className="filters">
+              <th className="w-24">
+                <div className="text-xs text-gray-500">Cari ID</div>
+                <input
+                  value={fId}
+                  onChange={(e) => setFId(e.target.value)}
+                  className="w-full border rounded px-2 py-1"
+                  placeholder="ID"
+                />
+              </th>
+              <th className="w-60">
+                <div className="text-xs text-gray-500">Start (Click)</div>
+                <input
+                  type="date"
+                  value={fStart}
+                  onChange={(e) => setFStart(e.target.value)}
+                  className="w-full border rounded px-2 py-1"
+                />
+              </th>
+              <th className="w-60">
+                <div className="text-xs text-gray-500">Finish (Click)</div>
+                <input
+                  type="date"
+                  value={fFinish}
+                  onChange={(e) => setFFinish(e.target.value)}
+                  className="w-full border rounded px-2 py-1"
+                />
+              </th>
+              <th className="w-36">
+                <div className="text-xs text-gray-500">Cat</div>
+                <select
+                  value={fCat}
+                  onChange={(e) => setFCat(e.target.value as CatKey)}
+                  className="w-full border rounded px-2 py-1"
+                >
+                  {CAT_OPTIONS.map((c) => (
+                    <option key={c.key} value={c.key}>{c.label}</option>
+                  ))}
+                </select>
+              </th>
+              <th className="min-w-[320px]">
+                <div className="text-xs text-gray-500">Bank</div>
+                <select
+                  value={fBankId === "" ? "" : String(fBankId)}
+                  onChange={(e) => setFBankId(e.target.value ? Number(e.target.value) : "")}
+                  className="w-full border rounded px-2 py-1"
+                >
+                  <option value="">All</option>
+                  {banks.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      [{b.bank_code}] {b.account_name} - {b.account_no}
+                      {!b.is_active ? " (OFF)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </th>
+              <th className="w-56">
+                <div className="text-xs text-gray-500">Desc</div>
+                <input
+                  value={fDesc}
+                  onChange={(e) => setFDesc(e.target.value)}
+                  className="w-full border rounded px-2 py-1"
+                  placeholder="Desc"
+                />
+              </th>
+              <th className="w-24"></th>
+              <th className="w-24"></th>
+              <th className="w-24"></th>
+              <th className="w-28">
+                <button
+                  onClick={() => load(1)}
+                  className="rounded bg-blue-600 text-white px-3 py-1 mt-5"
+                >
+                  submit
+                </button>
+              </th>
+            </tr>
+
+            {/* HEADER */}
+            <tr>
+              <th className="text-left w-24">ID</th>
+              <th className="text-left w-56">Waktu Click</th>
+              <th className="text-left w-56">Waktu Dipilih</th>
+              <th className="text-left w-28">Cat</th>
+              <th className="text-left min-w-[320px]">Bank</th>
+              <th className="text-left w-60">Desc</th>
+              <th className="text-right w-32">Amount</th>
+              <th className="text-right w-40">Start</th>
+              <th className="text-right w-40">Finish</th>
+              <th className="text-left w-40">Creator</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={10}>Loading…</td></tr>
+            ) : rows.length === 0 ? (
+              <tr><td colSpan={10}>No data</td></tr>
+            ) : (
+              rows.map((r) => {
+                const creator = (r.created_by && creatorMap[r.created_by]) || r.created_by || "-";
+                const tag = reversalTag(r);
+                return (
+                  <tr key={r.id} className="align-top">
+                    <td>{r.id}</td>
+                    <td>{new Date(r.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
+                    <td>{new Date(r.txn_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
+                    <td>{labelCat(r.kind)}</td>
+                    <td className="whitespace-normal break-words">
+                      <div className="font-semibold">
+                        {bankLabel(r.bank_id)}{" "}
+                        <span className="text-gray-500">{tag}</span>
+                      </div>
+                      <div className="my-1 h-px bg-gray-200" />
+                      <div className="text-sm text-gray-700">{extraInfo(r)}</div>
+                    </td>
+                    <td className="whitespace-normal break-words">{r.description ?? ""}</td>
+                    <td className="text-right">{formatAmount(r.amount)}</td>
+                    <td className="text-right">{formatAmount(r.balance_before)}</td>
+                    <td className="text-right">{formatAmount(r.balance_after)}</td>
+                    <td>{creator}</td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* PAGINATION */}
+      <div className="flex justify-center">
+        <nav className="inline-flex items-center gap-1 text-sm select-none">
+          <button onClick={() => page > 1 && load(1)} disabled={page <= 1} className="px-3 py-1 rounded border bg-white disabled:opacity-50">First</button>
+          <button onClick={() => page > 1 && load(page - 1)} disabled={page <= 1} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Previous</button>
+          <span className="px-3 py-1 rounded border bg-white">Page {page} / {totalPages}</span>
+          <button onClick={() => page < totalPages && load(page + 1)} disabled={page >= totalPages} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Next</button>
+          <button onClick={() => page < totalPages && load(totalPages)} disabled={page >= totalPages} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Last</button>
+        </nav>
+      </div>
+    </div>
+  );
+}
