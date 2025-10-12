@@ -1,17 +1,10 @@
 import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/auth-helpers-nextjs";
+import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 
+/**
+ * Supabase client untuk Server Components.
+ * Library akan membaca cookie auth dari Next `cookies()`.
+ */
 export const supabaseServer = () => {
-  const cookieStore = cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-      },
-    }
-  );
+  return createServerComponentClient({ cookies });
 };
