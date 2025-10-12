@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
 type Lead = {
@@ -48,7 +48,6 @@ export default function LeadsTable() {
       qy = qy.lt("registration_date", end.toISOString());
     }
     if (q) {
-      // cari di beberapa kolom (ilike = case-insensitive)
       const like = `%${q}%`;
       qy = qy.or(`name.ilike.${like},username.ilike.${like},phone_number.ilike.${like},bank_name.ilike.${like},bank_no.ilike.${like}`);
     }
@@ -70,16 +69,11 @@ export default function LeadsTable() {
   const openEdit = (r: Lead) => { setEditing(r); setForm(r); setShowForm(true); };
 
   const save = async () => {
-    // TENANT diisi otomatis lewat RLS? --> tidak; kita butuh tenant_id
-    // Tapi RLS "with check" memastikan hanya tenant sendiri yang boleh insert.
-    // Untuk insert, kita ambil tenant_id pengguna dari table profiles via RPC atau additional fetch.
-    // Sederhana: panggil edge function? Untuk tahap awal, kita minta client kirim tenant_id yang benar.
-    // Lebih aman: lakukan upsert tanpa tenant_id lalu trigger? Di sini kita set via RPC fetch profile.
-
-    // ambil tenant_id user saat ini
+    // Ambil tenant_id user dari profiles
     const { data: { user } } = await supabase.auth.getUser();
-    const { data: prof } = await supabase
+    const { data: prof, error: eProf } = await supabase
       .from("profiles").select("tenant_id").eq("user_id", user?.id).single();
+    if (eProf) { alert(eProf.message); return; }
 
     const payload: any = {
       name: form.name,
