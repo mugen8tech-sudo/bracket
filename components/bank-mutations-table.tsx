@@ -141,7 +141,7 @@ export default function BankMutationsTable() {
     let q = supabase
       .from("bank_mutations")
       .select("*", { count: "exact" })
-      .order("performed_at", { ascending: false });
+      .order("performed_at", { ascending: false })
       .order("id", { ascending: true });
 
     // Filter Waktu Click (REAL)
