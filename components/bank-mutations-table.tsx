@@ -282,20 +282,6 @@ export default function BankMutationsTable() {
     }
     return null;
   };
-  
-  const reversalTag = (r: BankMutationRow) => {
-    if (r.kind === "REVERSAL_DEPOSIT") {
-      const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
-      const madeAt = d?.performed_at ? new Date(d.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : "-";
-      return `[REVERSAL-${madeAt}]`;
-    }
-    if (r.kind === "REVERSAL_WITHDRAWAL") {
-      const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
-      const madeAt = w?.performed_at ? new Date(w.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : "-";
-      return `[REVERSAL-${madeAt}]`;
-    }
-    return null;
-  };
   const totalPagesTxt = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
