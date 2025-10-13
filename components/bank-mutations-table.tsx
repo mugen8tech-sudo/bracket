@@ -126,7 +126,7 @@ export default function BankMutationsTable() {
           .select("id, bank_code, account_name, account_no, is_active")
           .eq("tenant_id", t)
           .order("is_active", { ascending: false })
-          .order("id", { ascending: false });
+          .order("id", { ascending: true });
         setBanks((data as BankLite[]) ?? []);
       }
     })();
