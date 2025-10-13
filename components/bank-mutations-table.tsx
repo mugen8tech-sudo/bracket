@@ -17,7 +17,7 @@ type BankMutationRow = {
   id: number;
   tenant_id: string;
   bank_id: number;
-  deposit_id: number | null; // ref ke deposits/withdrawals
+  deposit_id: number | null; // ref ke deposits/withdrawals (generic)
   kind: MutationKind;
   amount: number;
   balance_before: number;
@@ -44,8 +44,8 @@ const CAT_OPTIONS = [
   { key: "PENDING_DP",   label: "Pending DP" },
   { key: "SESAMA_CM",    label: "Sesama CM" },
   { key: "ADJ",          label: "Adjustment" },
-  { key: "EXPENSE",      label: "Expense" },          // khusus Expenses (bukan fee)
-  { key: "TRANSFER_FEE", label: "Biaya Transaksi" },  // EXPENSE fee WD/TT
+  { key: "EXPENSE",      label: "Expense" },          // khusus Expenses umum
+  { key: "TRANSFER_FEE", label: "Biaya Transaksi" },  // EXPENSE fee (DP/WD/TT)
 ] as const;
 type CatKey = typeof CAT_OPTIONS[number]["key"];
 
@@ -57,11 +57,10 @@ function kindsForCat(cat: CatKey): MutationKind[] | "EXPENSE_TRANSFER" | "ALL" {
     case "SESAMA_CM":  return ["INTERBANK_OUT", "INTERBANK_IN"];
     case "ADJ":        return ["ADJUSTMENT"];
     case "EXPENSE":    return ["EXPENSE"];          // nanti dipilah: BUKAN transfer fee
-    case "TRANSFER_FEE": return "EXPENSE_TRANSFER"; // hanya transfer fee
+    case "TRANSFER_FEE": return "EXPENSE_TRANSFER"; // hanya fee
     default:           return "ALL";
   }
 }
-
 function startOfDayJakartaISO(d: string) {
   return new Date(`${d}T00:00:00+07:00`).toISOString();
 }
@@ -82,7 +81,7 @@ function isTransferFee(desc?: string | null) {
     s.includes("fee transfer") ||
     s.includes("fee wd") ||
     s.includes("wd fee") ||
-    s.includes("reversal wd fee") ||
+    s.includes("reversal wd fee") ||   // <— reversal fee
     s.includes("tt fee") ||
     s.includes("interbank fee")
   );
@@ -142,7 +141,7 @@ export default function BankMutationsTable() {
       .from("bank_mutations")
       .select("*", { count: "exact" })
       .order("performed_at", { ascending: false })
-      .order("id", { ascending: true }); // tie-breaker stabil
+      .order("id", { ascending: true }); // tie‑breaker stabil
 
     // Filter Waktu Click (REAL)
     if (fStart) q = q.gte("performed_at", startOfDayJakartaISO(fStart));
@@ -177,58 +176,53 @@ export default function BankMutationsTable() {
     if (kinds === "EXPENSE_TRANSFER") {
       list = list.filter((r) => isTransferFee(r.description));
     } else if (Array.isArray(kinds) && kinds.length === 1 && kinds[0] === "EXPENSE" && fCat === "EXPENSE") {
-      list = list.filter((r) => !isTransferFee(r.description));
+      list = list.filter((r) => !isTransferFee(r.description)); // Expenses umum
     }
 
-    // ---- Pairing WD + Fee agar fee selalu muncul tepat setelah WD‑nya ----
-    // (hindari duplikasi & tetap tampilkan fee meski WD tidak ada di halaman ini)
+    // ---- Pairing WD + FEE (negatif) & REVERSAL_WD + FEE (positif) ----
+    // (tanpa duplikasi & fee selalu tepat setelah pasangannya)
     if (fCat !== "TRANSFER_FEE") {
-      const feeByRef = new Map<number, BankMutationRow>();
+      const feeNegByRef = new Map<number, BankMutationRow>(); // WD Fee (amount < 0)
+      const feePosByRef = new Map<number, BankMutationRow>(); // Reversal WD Fee (amount > 0)
+      const wdIdsInPage = new Set<number>();
+      const revWdIdsInPage = new Set<number>();
+
       for (const r of list) {
+        if ((r.kind === "WITHDRAWAL") && r.deposit_id) wdIdsInPage.add(r.deposit_id);
+        if ((r.kind === "REVERSAL_WITHDRAWAL") && r.deposit_id) revWdIdsInPage.add(r.deposit_id);
         if (r.kind === "EXPENSE" && isTransferFee(r.description) && r.deposit_id) {
-          feeByRef.set(r.deposit_id, r);
+          if (r.amount < 0) { if (!feeNegByRef.has(r.deposit_id)) feeNegByRef.set(r.deposit_id, r); }
+          else if (r.amount > 0) { if (!feePosByRef.has(r.deposit_id)) feePosByRef.set(r.deposit_id, r); }
         }
       }
 
       const usedFeeIds = new Set<number>();
       const ordered: BankMutationRow[] = [];
 
-      // pre-scan WD presence untuk setiap fee
-      const wdRefInPage = new Set<number>();
-      for (const r of list) {
-        if ((r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") && r.deposit_id) {
-          wdRefInPage.add(r.deposit_id);
-        }
-      }
-
       for (const r of list) {
         const isFee = r.kind === "EXPENSE" && isTransferFee(r.description) && !!r.deposit_id;
 
         if (isFee) {
-          // Jika WD pasangan ADA di halaman -> SKIP di sini (akan disisipkan setelah WD)
-          // Jika TIDAK ADA -> tampilkan fee apa adanya
-          if (wdRefInPage.has(r.deposit_id!)) {
-            // jangan tampilkan sekarang (hindari duplikasi)
-            continue;
-          } else {
-            if (!usedFeeIds.has(r.id)) {
-              ordered.push(r);
-              usedFeeIds.add(r.id);
-            }
-            continue;
-          }
+          // Jika WD-nya ada di halaman ini → fee disisipkan setelah WD; skip di sini
+          if (r.amount < 0 && wdIdsInPage.has(r.deposit_id!)) continue;
+          // Jika Reversal WD-nya ada di halaman ini → fee reversal disisipkan setelah REV WD; skip di sini
+          if (r.amount >= 0 && revWdIdsInPage.has(r.deposit_id!)) continue;
+          // Jika pasangannya TIDAK ada di halaman, tampilkan fee apa adanya
+          if (!usedFeeIds.has(r.id)) { ordered.push(r); usedFeeIds.add(r.id); }
+          continue;
         }
 
-        // Bukan fee → tampilkan
+        // tampilkan baris non-fee
         ordered.push(r);
 
-        // Jika ini WD / REVERSAL_WD → sisipkan fee pasangannya segera setelahnya
-        if ((r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") && r.deposit_id) {
-          const fee = feeByRef.get(r.deposit_id);
-          if (fee && !usedFeeIds.has(fee.id)) {
-            ordered.push(fee);
-            usedFeeIds.add(fee.id);
-          }
+        // sisipkan fee sesuai jenis transaksi
+        if ((r.kind === "WITHDRAWAL") && r.deposit_id) {
+          const fee = feeNegByRef.get(r.deposit_id);
+          if (fee && !usedFeeIds.has(fee.id)) { ordered.push(fee); usedFeeIds.add(fee.id); }
+        }
+        if ((r.kind === "REVERSAL_WITHDRAWAL") && r.deposit_id) {
+          const fee = feePosByRef.get(r.deposit_id);
+          if (fee && !usedFeeIds.has(fee.id)) { ordered.push(fee); usedFeeIds.add(fee.id); }
         }
       }
 
