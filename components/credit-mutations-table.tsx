@@ -258,7 +258,7 @@ export default function CreditMutationsTable() {
                     className="w-full border rounded px-2 py-1"
                   />
                 </th>
-                <th className="w-64">
+                <th className="w-50">
                   <div className="flex flex-col gap-1">
                     <input
                       type="date"
