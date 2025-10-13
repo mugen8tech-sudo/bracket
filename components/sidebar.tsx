@@ -21,7 +21,7 @@ export default function Sidebar() {
     { label: "Bank Management", href: "#", enabled: false },
     { label: "Credit Topup", href: "#", enabled: false },
     { label: "Credit Adjustment", href: "#", enabled: false },
-    { label: "Credit Mutation", href: "#", enabled: false },
+    { label: "Credit Mutation", href: "/credit_mutations", enabled: true },
     { label: "Credit Report", href: "#", enabled: false },
     { label: "User Management", href: "#", enabled: false },
   ];
