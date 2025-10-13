@@ -276,7 +276,7 @@ export default function CreditMutationsTable() {
                     />
                   </div>
                 </th>
-                <th className="w-52" />
+                <th className="w-32" />
                 <th className="w-40">
                   <select
                     value={fCat}
