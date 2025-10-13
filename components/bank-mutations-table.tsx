@@ -207,18 +207,10 @@ export default function BankMutationsTable() {
 
     // lookups batch: deposit, creator, lead
     const refIds = Array.from(new Set(list.map(r => r.deposit_id).filter((v): v is number => !!v)));
-    const creatorIds = Array.from(new Set(list.map(r => r.created_by).filter((v): v is string => !!v)));
 
-    const [depRes, wdRes, profRes] = await Promise.all([
-      refIds.length
-        ? supabase.from("deposits").select("id, username, lead_id, performed_at").in("id", refIds)
-        : Promise.resolve({ data: [] as any[] }),
-      refIds.length
-        ? supabase.from("withdrawals").select("id, username, lead_id, performed_at").in("id", refIds)
-        : Promise.resolve({ data: [] as any[] }),
-      creatorIds.length
-        ? supabase.from("profiles").select("user_id, full_name").in("user_id", creatorIds)
-        : Promise.resolve({ data: [] as any[] }),
+    const [depRes, wdRes] = await Promise.all([
+      refIds.length ? supabase.from("deposits").select("id, username, lead_id, performed_at").in("id", refIds) : Promise.resolve({ data: [] as any[] }),
+      refIds.length ? supabase.from("withdrawals").select("id, username, lead_id, performed_at").in("id", refIds) : Promise.resolve({ data: [] as any[] }),
     ]);
 
     const depList = (depRes.data as DepositLite[]) ?? [];
@@ -226,11 +218,16 @@ export default function BankMutationsTable() {
     setDepositMap(Object.fromEntries(depList.map(d => [d.id, d])));
     setWithdrawalMap(Object.fromEntries(wdList.map(d => [d.id, d])));
 
-    const leadIds = Array.from(new Set(depList.map(d => d.lead_id), wdList.map(d => d.lead_id).filter((v): v is number => !!v)));
+    // lookups lead
+    const leadIds = Array.from(
+      new Set([...depList.map(d => d.lead_id), ...wdList.map(d => d.lead_id)].filter((v): v is number => !!v))
+    );
     const leadList = leadIds.length ? ((await supabase.from("leads").select("id, name").in("id", leadIds)).data as LeadLite[] ?? []) : [];
     setLeadMap(Object.fromEntries(leadList.map(l => [l.id, l])));
 
-    const profList = (profRes.data as ProfileLite[]) ?? [];
+    // lookups creator
+    const creatorIds = Array.from(new Set(list.map(r => r.created_by).filter((v): v is string => !!v)));
+    const profList = creatorIds.length ? ((await supabase.from("profiles").select("user_id, full_name").in("user_id", creatorIds)).data as ProfileLite[] ?? []) : [];
     setCreatorMap(Object.fromEntries(profList.map(p => [p.user_id, p.full_name])));
 
     setLoading(false);
