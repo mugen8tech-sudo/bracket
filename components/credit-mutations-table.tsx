@@ -1,43 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
-type CatCode = "DP" | "WD" | "ADJUSTMENT" | "TOPUP" | string;
-
-type CreditMutationRow = {
-  id: number;
-  tenant_id: string;
-
-  // waktu
-  performed_at?: string | null; // waktu click (real)
-  created_at?: string | null;   // fallback real time
-  txn_at?: string | null;       // waktu dipilih
-  txn_at_final?: string | null; // fallback waktu dipilih
-
-  // kategori & keterangan
-  category?: CatCode | null;           // contoh: DP, WD, ADJUSTMENT, TOPUP
-  description?: string | null;
-
-  // snapshot player (opsional, bantu fallback Desc)
-  username_snapshot?: string | null;
-
-  // nominal & saldo
-  amount_delta: number;        // perubahan credit (+/-)
-  balance_before: number;      // saldo credit sebelum
-  balance_after: number;       // saldo credit sesudah
-
-  // pembuat
-  created_by?: string | null;
-  created_by_name?: string | null;
-};
-
+/** ================= Helpers ================= **/
 const PAGE_SIZE = 50;
 
-function toDateLocalJakarta(d: Date) {
-  // ambil yyyy-mm-dd sesuai Asia/Jakarta
-  return d.toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
+function yyyymmddJakarta(d = new Date()) {
+  // default ke hari ini (Asia/Jakarta)
+  const opts: Intl.DateTimeFormatOptions = { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" } as any;
+  const [m, d2, y] = new Intl.DateTimeFormat("id-ID", opts)
+    .format(d)
+    .split("/")
+    .map((s) => s.padStart(2, "0"));
+  return `${y}-${m}-${d2}`;
 }
 function startOfDayJakartaISO(dateStr: string) {
   return new Date(`${dateStr}T00:00:00+07:00`).toISOString();
@@ -45,125 +22,144 @@ function startOfDayJakartaISO(dateStr: string) {
 function endOfDayJakartaISO(dateStr: string) {
   return new Date(`${dateStr}T23:59:59.999+07:00`).toISOString();
 }
-function toJakartaDateTimeString(iso?: string | null) {
-  if (!iso) return "-";
-  return new Date(iso).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" });
-}
+
+type Row = {
+  id: number;
+  tenant_id: string;
+  deposit_id: number | null;
+  kind: "deposit" | "withdraw" | "adjustment" | "topup" | string;
+  amount: number;
+  credit_before: number;
+  credit_after: number;
+  txn_at: string;          // waktu dipilih (backdate)
+  performed_at: string;    // waktu klik (real)
+  description: string | null;
+  created_at: string;
+  created_by: string | null;
+};
+
+type ProfileName = { user_id: string; full_name: string | null };
+
+const CAT_TO_KIND: Record<"ALL" | "DP" | "WD" | "ADJ" | "TOPUP", string | null> = {
+  ALL: null,
+  DP: "deposit",
+  WD: "withdraw",
+  ADJ: "adjustment",
+  TOPUP: "topup",
+};
 
 export default function CreditMutationsTable() {
   const supabase = supabaseBrowser();
 
-  // ========== Header summary ==========
-  const [tenantCredit, setTenantCredit] = useState<number>(0);
+  /** ====== header: saldo tenant ====== */
+  const [tenantBalance, setTenantBalance] = useState<number>(0);
 
-  // ========== List & pagination ==========
-  const [rows, setRows] = useState<CreditMutationRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  /** ====== filters ====== */
+  const [fId, setFId] = useState<string>("");
+  const [fStart, setFStart] = useState<string>(yyyymmddJakarta());
+  const [fFinish, setFFinish] = useState<string>(yyyymmddJakarta());
+  const [fCat, setFCat] = useState<"ALL" | "DP" | "WD" | "ADJ" | "TOPUP">("ALL");
+  const [fDesc, setFDesc] = useState<string>("");
+
+  /** ====== list & pagination ====== */
+  const [rows, setRows] = useState<Row[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const [loading, setLoading] = useState(true);
 
-  // ========== Filters (tidak live; submit dulu) ==========
-  const today = useMemo(() => toDateLocalJakarta(new Date()), []);
-  const [fId, setFId] = useState<string>("");
-  const [fCat, setFCat] = useState<"ALL" | "DP" | "WD" | "ADJUSTMENT" | "TOPUP">("ALL");
-  const [fDesc, setFDesc] = useState<string>("");
-  const [fStart, setFStart] = useState<string>(today);  // default hari ini
-  const [fFinish, setFFinish] = useState<string>(today); // default hari ini
+  /** ====== creator name map ====== */
+  const [nameMap, setNameMap] = useState<Record<string, string>>({});
 
-  // ambil credit tenant (untuk header)
-  const loadTenantCredit = async () => {
+  /** ====== load tenant credit (balance sekarang) ====== */
+  const loadTenantCredit = useCallback(async () => {
     const {
       data: { user },
+      error: eUser,
     } = await supabase.auth.getUser();
+    if (eUser || !user) return;
 
     const { data: prof } = await supabase
       .from("profiles")
       .select("tenant_id")
-      .eq("user_id", user?.id)
+      .eq("user_id", user.id)
       .single();
 
     if (prof?.tenant_id) {
-      const { data: tenant } = await supabase
+      const { data: t } = await supabase
         .from("tenants")
         .select("credit_balance")
         .eq("id", prof.tenant_id)
         .single();
-      setTenantCredit(Number(tenant?.credit_balance ?? 0));
+      setTenantBalance(Number(t?.credit_balance || 0));
     }
-  };
+  }, [supabase]);
 
-  // build query (filter diterapkan di applyFilters)
-  const buildQuery = () => {
+  /** ====== build query ====== */
+  const buildQuery = useCallback(() => {
     let q = supabase
       .from("credit_mutations")
       .select("*", { count: "exact" })
-      .order("id", { ascending: false }); // ID terbesar = terbaru
+      .order("performed_at", { ascending: false });
 
-    // filter by ID (tepat)
     if (fId.trim()) {
       const asNum = Number(fId.trim());
       if (!Number.isNaN(asNum)) q = q.eq("id", asNum);
-      else q = q.eq("id", -1); // paksa kosong jika bukan angka
     }
+    // filter waktu pada Waktu Click (performed_at)
+    if (fStart) q = q.gte("performed_at", startOfDayJakartaISO(fStart));
+    if (fFinish) q = q.lte("performed_at", endOfDayJakartaISO(fFinish));
 
-    // filter waktu click (real) -> kolom utama performed_at; fallback created_at
-    if (fStart) {
-      // gunakan or untuk fallback kolom waktu real
-      const startISO = startOfDayJakartaISO(fStart);
-      q = q.or(
-        `performed_at.gte.${startISO},created_at.gte.${startISO}`
-      );
-    }
-    if (fFinish) {
-      const endISO = endOfDayJakartaISO(fFinish);
-      q = q.or(
-        `performed_at.lte.${endISO},created_at.lte.${endISO}`
-      );
-    }
+    const kind = CAT_TO_KIND[fCat];
+    if (kind) q = q.eq("kind", kind);
 
-    // filter kategori
-    if (fCat !== "ALL") {
-      // menerima dua kemungkinan penamaan: ADJUSTMENT vs ADJ (bila SQL pakai 'ADJ', tambahkan sendiri)
-      if (fCat === "ADJUSTMENT") {
-        q = q.in("category", ["ADJUSTMENT", "ADJ"]);
-      } else {
-        q = q.eq("category", fCat);
-      }
-    }
-
-    // filter description
-    if (fDesc.trim()) {
-      q = q.ilike("description", `%${fDesc.trim()}%`);
-    }
+    if (fDesc.trim()) q = q.ilike("description", `%${fDesc.trim()}%`);
 
     return q;
-  };
+  }, [supabase, fId, fStart, fFinish, fCat, fDesc]);
 
-  const load = async (pageToLoad = page) => {
-    setLoading(true);
-    const from = (pageToLoad - 1) * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
+  /** ====== load rows ====== */
+  const load = useCallback(
+    async (pageToLoad = page) => {
+      setLoading(true);
+      const from = (pageToLoad - 1) * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
 
-    const { data, error, count } = await buildQuery().range(from, to);
-    setLoading(false);
+      const { data, error, count } = await buildQuery().range(from, to);
+      setLoading(false);
+      if (error) {
+        alert(error.message);
+        return;
+      }
+      const list = (data as Row[]) ?? [];
+      setRows(list);
+      setTotal(count ?? 0);
+      setPage(pageToLoad);
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
-    setRows(((data as any[]) ?? []) as CreditMutationRow[]);
-    setTotal(count ?? 0);
-    setPage(pageToLoad);
-  };
+      // ambil nama Creator (profiles.full_name)
+      const ids = Array.from(
+        new Set(list.map((r) => r.created_by).filter(Boolean) as string[])
+      );
+      if (ids.length > 0) {
+        const { data: profs } = await supabase
+          .from("profiles")
+          .select("user_id, full_name")
+          .in("user_id", ids);
+        const m: Record<string, string> = {};
+        (profs as ProfileName[] | null)?.forEach((p) => {
+          if (p.user_id) m[p.user_id] = p.full_name ?? p.user_id;
+        });
+        setNameMap(m);
+      } else {
+        setNameMap({});
+      }
+    },
+    [buildQuery, page, supabase]
+  );
 
+  /** ====== first load: default hari ini + saldo ====== */
   useEffect(() => {
     loadTenantCredit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // default load (dengan filter hari ini)
-  useEffect(() => {
     load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -176,19 +172,19 @@ export default function CreditMutationsTable() {
   const canPrev = page > 1;
   const canNext = page < totalPages;
 
+  /** ====== Render ====== */
   return (
     <div className="space-y-3">
-      {/* Header summary */}
+      {/* Header saldo */}
       <div className="rounded border bg-white p-3 text-sm">
-        <b>Credit Mutations.</b> Balance sekarang {formatAmount(tenantCredit)}
+        <b>Credit Mutations.</b> Balance sekarang {formatAmount(tenantBalance)}
       </div>
 
       <div className="overflow-auto rounded border bg-white">
-        <table className="table-grid min-w-[1200px]" style={{ borderCollapse: "collapse" }}>
+        <table className="table-grid min-w-[1100px]" style={{ borderCollapse: "collapse" }}>
           <thead>
-            {/* Baris FILTERS (letaknya seperti Leads/Deposits: di atas header) */}
+            {/* Baris FILTERS (di atas header) */}
             <tr className="filters">
-              {/* ID */}
               <th className="w-24">
                 <input
                   placeholder="Cari ID"
@@ -198,45 +194,42 @@ export default function CreditMutationsTable() {
                   className="w-full border rounded px-2 py-1"
                 />
               </th>
-
-              {/* Waktu Click (real): Start/Finish (stack) */}
-              <th className="min-w-[240px]">
-                <div className="text-xs font-semibold mb-1">Start (Click)</div>
-                <input
-                  type="date"
-                  value={fStart}
-                  onChange={(e) => setFStart(e.target.value)}
-                  className="border rounded px-2 py-1 w-full mb-1"
-                />
-                <div className="text-xs font-semibold mb-1">Finish (Click)</div>
-                <input
-                  type="date"
-                  value={fFinish}
-                  onChange={(e) => setFFinish(e.target.value)}
-                  className="border rounded px-2 py-1 w-full"
-                />
+              {/* Waktu Click filter (Start/Finish) */}
+              <th className="w-60">
+                <div className="flex flex-col gap-1">
+                  <input
+                    type="date"
+                    value={fStart}
+                    onChange={(e) => setFStart(e.target.value)}
+                    className="border rounded px-2 py-1"
+                    aria-label="Start (Click)"
+                  />
+                  <input
+                    type="date"
+                    value={fFinish}
+                    onChange={(e) => setFFinish(e.target.value)}
+                    className="border rounded px-2 py-1"
+                    aria-label="Finish (Click)"
+                  />
+                </div>
               </th>
+              {/* Waktu dipilih tidak difilter, hanya ditampilkan */}
+              <th className="w-60"></th>
 
-              {/* Waktu Dipilih: hanya header kosong (filter khusus di atas adalah click-time) */}
-              <th className="min-w-[200px]"></th>
-
-              {/* Cat */}
-              <th className="w-40">
+              <th className="w-28">
                 <select
                   value={fCat}
                   onChange={(e) => setFCat(e.target.value as any)}
-                  className="border rounded px-2 py-1 w-full"
+                  className="border rounded px-2 py-1"
                 >
                   <option value="ALL">All</option>
                   <option value="DP">DP</option>
                   <option value="WD">WD</option>
-                  <option value="ADJUSTMENT">Adjustment</option>
+                  <option value="ADJ">Adjustment</option>
                   <option value="TOPUP">Topup</option>
                 </select>
               </th>
-
-              {/* Desc */}
-              <th className="min-w-[260px]">
+              <th>
                 <input
                   placeholder="Desc"
                   value={fDesc}
@@ -245,32 +238,27 @@ export default function CreditMutationsTable() {
                   className="w-full border rounded px-2 py-1"
                 />
               </th>
-
-              {/* Amount/Start/Finish/Creator: tidak ada filter di baris ini */}
-              <th></th>
-              <th></th>
-              <th></th>
-              <th className="whitespace-nowrap">
-                <button
-                  onClick={() => load(1)}
-                  className="rounded bg-blue-600 text-white px-3 py-1"
-                >
+              <th className="w-28"></th>
+              <th className="w-28"></th>
+              <th className="w-28"></th>
+              <th className="w-32">
+                <button onClick={applyFilters} className="rounded bg-blue-600 text-white px-3 py-1">
                   submit
                 </button>
               </th>
             </tr>
 
-            {/* HEADER kolom */}
+            {/* Header kolom */}
             <tr>
               <th className="text-left w-24">ID</th>
-              <th className="text-left min-w-[220px]">Waktu Click</th>
-              <th className="text-left min-w-[200px]">Waktu dipilih</th>
-              <th className="text-left w-28">Cat</th>
+              <th className="text-left w-60">Waktu Click</th>
+              <th className="text-left w-60">Waktu dipilih</th>
+              <th className="text-left w-20">Cat</th>
               <th className="text-left min-w-[280px]">Desc</th>
-              <th className="text-left w-36">Amount</th>
-              <th className="text-left w-40">Start</th>
-              <th className="text-left w-40">Finish</th>
-              <th className="text-left w-40">Creator</th>
+              <th className="text-left w-28">Amount</th>
+              <th className="text-left w-28">Start</th>
+              <th className="text-left w-28">Finish</th>
+              <th className="text-left w-44">Creator</th>
             </tr>
           </thead>
 
@@ -284,36 +272,45 @@ export default function CreditMutationsTable() {
                 <td colSpan={9}>No data</td>
               </tr>
             ) : (
-              rows.map((r) => {
-                const realTime = r.performed_at ?? r.created_at ?? null;
-                const chosenTime = r.txn_at ?? r.txn_at_final ?? null;
+              rows.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.id}</td>
 
-                const desc =
-                  (r.description && r.description.trim()) ||
-                  (String(r.category).toUpperCase() === "DP" && r.username_snapshot
-                    ? `Depo dari ${r.username_snapshot}`
-                    : "-");
+                  <td>
+                    {new Date(r.performed_at).toLocaleString("id-ID", {
+                      timeZone: "Asia/Jakarta",
+                    })}
+                  </td>
 
-                // normalisasi kategori label
-                const catLabel =
-                  String(r.category || "")
-                    .toUpperCase()
-                    .replace("ADJ", "ADJUSTMENT") || "-";
+                  <td>
+                    {new Date(r.txn_at).toLocaleString("id-ID", {
+                      timeZone: "Asia/Jakarta",
+                    })}
+                  </td>
 
-                return (
-                  <tr key={r.id}>
-                    <td>{r.id}</td>
-                    <td>{toJakartaDateTimeString(realTime)}</td>
-                    <td>{toJakartaDateTimeString(chosenTime)}</td>
-                    <td>{catLabel}</td>
-                    <td className="whitespace-pre-wrap">{desc}</td>
-                    <td className="text-left">{formatAmount(r.amount_delta)}</td>
-                    <td className="text-left">{formatAmount(r.balance_before)}</td>
-                    <td className="text-left">{formatAmount(r.balance_after)}</td>
-                    <td>{r.created_by_name ?? r.created_by ?? "-"}</td>
-                  </tr>
-                );
-              })
+                  <td>
+                    {r.kind === "deposit"
+                      ? "DP"
+                      : r.kind === "withdraw"
+                      ? "WD"
+                      : r.kind === "adjustment"
+                      ? "ADJ"
+                      : r.kind === "topup"
+                      ? "TOPUP"
+                      : r.kind}
+                  </td>
+
+                  <td className="whitespace-pre-wrap break-words">
+                    {r.description ?? "-"}
+                  </td>
+
+                  <td>{formatAmount(r.amount)}</td>
+                  <td>{formatAmount(r.credit_before)}</td>
+                  <td>{formatAmount(r.credit_after)}</td>
+
+                  <td>{r.created_by ? nameMap[r.created_by] ?? r.created_by : "-"}</td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>
@@ -323,15 +320,22 @@ export default function CreditMutationsTable() {
       <div className="flex justify-center">
         <nav className="inline-flex items-center gap-1 text-sm select-none">
           <button
-            onClick={() => page > 1 && load(1)}
-            disabled={page <= 1}
+            onClick={() => {
+              if (!canPrev) return;
+              setPage(1);
+              load(1);
+            }}
+            disabled={!canPrev}
             className="px-3 py-1 rounded border bg-white disabled:opacity-50"
           >
             First
           </button>
           <button
-            onClick={() => page > 1 && load(page - 1)}
-            disabled={page <= 1}
+            onClick={() => {
+              if (!canPrev) return;
+              load(page - 1);
+            }}
+            disabled={!canPrev}
             className="px-3 py-1 rounded border bg-white disabled:opacity-50"
           >
             Previous
@@ -340,15 +344,21 @@ export default function CreditMutationsTable() {
             Page {page} / {totalPages}
           </span>
           <button
-            onClick={() => page < totalPages && load(page + 1)}
-            disabled={page >= totalPages}
+            onClick={() => {
+              if (!canNext) return;
+              load(page + 1);
+            }}
+            disabled={!canNext}
             className="px-3 py-1 rounded border bg-white disabled:opacity-50"
           >
             Next
           </button>
           <button
-            onClick={() => page < totalPages && load(totalPages)}
-            disabled={page >= totalPages}
+            onClick={() => {
+              if (!canNext) return;
+              load(totalPages);
+            }}
+            disabled={!canNext}
             className="px-3 py-1 rounded border bg-white disabled:opacity-50"
           >
             Last
