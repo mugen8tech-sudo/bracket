@@ -290,7 +290,7 @@ export default function CreditMutationsTable() {
                     <option value="TOPUP">Topup</option>
                   </select>
                 </th>
-                <th className="w-[260px]">
+                <th className="w-[320px]">
                   <input
                     placeholder="Desc"
                     value={fDesc}
@@ -314,7 +314,7 @@ export default function CreditMutationsTable() {
                 <th className="text-left w-64">Waktu Click</th>
                 <th className="text-left w-50">Waktu dipilih</th>
                 <th className="text-left w-28">Cat</th>
-                <th className="text-left min-w-[260px]">Desc</th>
+                <th className="text-left min-w-[320px]">Desc</th>
                 <th className="text-left w-28">Amount</th>
                 <th className="text-left w-28">Start</th>
                 <th className="text-left w-28">Finish</th>
