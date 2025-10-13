@@ -18,8 +18,12 @@ type DepositRow = {
   performed_at: string;    // waktu klik (real)
   status: "posted" | "reversed";
   created_by: string | null;
+
   // embed relasi
   lead?: { name: string | null } | null;
+
+  // diisi di client dari tabel profiles
+  created_by_name?: string | null;
 };
 
 const PAGE_SIZE = 50;
@@ -29,6 +33,10 @@ function startOfDayJakartaISO(d: string) {
 }
 function endOfDayJakartaISO(d: string) {
   return new Date(`${d}T23:59:59.999+07:00`).toISOString();
+}
+function todayJakartaDateStr() {
+  // yyyy-mm-dd di zona Asia/Jakarta
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 }
 function nowLocalDatetimeValue() {
   const d = new Date();
@@ -41,7 +49,7 @@ function nowLocalDatetimeValue() {
 export default function DepositsTable() {
   const supabase = supabaseBrowser();
 
-  // header summary (hari ini)
+  // header summary (hari ini, berdasarkan waktu dipilih/backdate)
   const [sumToday, setSumToday] = useState<number>(0);
   const [countToday, setCountToday] = useState<number>(0);
   const [playersToday, setPlayersToday] = useState<number>(0);
@@ -53,17 +61,16 @@ export default function DepositsTable() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const [loading, setLoading] = useState(true);
 
-  // filters
+  // filters — default: hari ini
   const [fLead, setFLead] = useState("");
   const [fUser, setFUser] = useState("");
-  const [fStart, setFStart] = useState("");
-  const [fFinish, setFFinish] = useState("");
+  const [fStart, setFStart] = useState<string>(todayJakartaDateStr());
+  const [fFinish, setFFinish] = useState<string>(todayJakartaDateStr());
   const [fDeleted, setFDeleted] = useState<"ALL" | "YES" | "NO">("ALL"); // YES → reversed
 
-  // today summary (berdasarkan waktu dipilih/backdate)
+  // summary hari ini (txn_at dipilih)
   const loadToday = async () => {
-    const now = new Date();
-    const y = now.toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" }); // yyyy-mm-dd
+    const y = todayJakartaDateStr();
     const s = startOfDayJakartaISO(y);
     const e = endOfDayJakartaISO(y);
 
@@ -84,7 +91,7 @@ export default function DepositsTable() {
     setPlayersToday(new Set(list.map((x) => x.username)).size);
   };
 
-  // build base query (filter Lead name diproses di load karena butuh query ID)
+  // base select (mengikuti struktur baseline)
   const buildBaseSelect = () =>
     supabase
       .from("deposits")
@@ -103,7 +110,7 @@ export default function DepositsTable() {
   const load = async (pageToLoad = page) => {
     setLoading(true);
 
-    // Jika filter lead name diisi → cari ID lead dulu
+    // Jika filter lead name diisi → cari ID lead dulu (karena select bawa satu nama saja)
     let leadIds: number[] | null = null;
     const leadName = fLead.trim();
     if (leadName) {
@@ -117,9 +124,8 @@ export default function DepositsTable() {
         alert(eLead.message);
         return;
       }
-      leadIds = (leadList ?? []).map((x) => Number(x.id)).filter((x) => Number.isFinite(x));
+      leadIds = (leadList ?? []).map((x) => Number(x.id)).filter(Number.isFinite);
       if (leadIds.length === 0) {
-        // tidak ada kandidat → kosongkan hasil
         setRows([]);
         setTotal(0);
         setPage(1);
@@ -141,18 +147,38 @@ export default function DepositsTable() {
     if (fDeleted === "NO") q = q.eq("status", "posted");
 
     const { data, error, count } = await q.range(from, to);
-    setLoading(false);
     if (error) {
+      setLoading(false);
       alert(error.message);
       return;
     }
 
-    setRows(((data as any[]) ?? []) as DepositRow[]);
+    // ---- map created_by -> full_name (agar kolom By tidak UUID) ----
+    const raw = ((data as any[]) ?? []) as DepositRow[];
+    const ids = Array.from(
+      new Set(raw.map((r) => r.created_by).filter(Boolean) as string[])
+    );
+    let nameMap = new Map<string, string>();
+    if (ids.length > 0) {
+      const { data: profs } = await supabase
+        .from("profiles")
+        .select("user_id, full_name")
+        .in("user_id", ids);
+      (profs ?? []).forEach((p: any) => nameMap.set(p.user_id, p.full_name));
+    }
+    const withNames = raw.map((r) => ({
+      ...r,
+      created_by_name: r.created_by ? nameMap.get(r.created_by) ?? null : null,
+    }));
+
+    setRows(withNames);
     setTotal(count ?? 0);
     setPage(pageToLoad);
+    setLoading(false);
   };
 
   useEffect(() => {
+    // summary + load awal (sudah default filter hari ini)
     loadToday();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -163,7 +189,7 @@ export default function DepositsTable() {
 
   const applyFilters = (e?: React.FormEvent) => {
     e?.preventDefault();
-    load(1);
+    load(1); // filter berlaku saat Submit/Enter (bukan live)
   };
 
   // ===== Delete (Reverse) modal =====
@@ -175,13 +201,15 @@ export default function DepositsTable() {
     account_name: string;
     account_no: string;
   } | null>(null);
-  const [delTxnAt, setDelTxnAt] = useState<string>(nowLocalDatetimeValue()); // waktu dipilih untuk reversal
+
+  // waktu reversal dipilih → dikunci (auto saat modal dibuka)
+  const [delTxnAt, setDelTxnAt] = useState<string>(nowLocalDatetimeValue());
 
   const openDelete = async (r: DepositRow) => {
     setDelRow(r);
     setDelNote("");
     setDelOpen(true);
-    setDelTxnAt(nowLocalDatetimeValue());
+    setDelTxnAt(nowLocalDatetimeValue()); // default saat modal dibuka
     setDelBank(null);
     const { data: b } = await supabase
       .from("banks")
@@ -213,7 +241,7 @@ export default function DepositsTable() {
     }
     const { error } = await supabase.rpc("reverse_deposit", {
       p_deposit_id: delRow.id,
-      p_txn_at_final: new Date(delTxnAt).toISOString(),
+      p_txn_at_final: new Date(delTxnAt).toISOString(), // waktu reversal (dikunci)
       p_reason: delNote.trim(),
     });
     if (error) {
@@ -338,7 +366,7 @@ export default function DepositsTable() {
                       timeZone: "Asia/Jakarta",
                     })}
                   </td>
-                  <td>{r.created_by ?? "-"}</td>
+                  <td>{r.created_by_name ?? r.created_by ?? "-"}</td>
                   <td>{r.status === "reversed" ? "YES" : "NO"}</td>
                   <td className="space-x-2">
                     <Link
@@ -455,7 +483,7 @@ export default function DepositsTable() {
                     <td>{formatAmount(delRow.fee_amount)}</td>
                   </tr>
                   <tr>
-                    <td>Tgl Transaksi (asli)</td>
+                    <td>Tgl Transaksi (dipilih)</td>
                     <td>
                       {new Date(delRow.txn_at).toLocaleString("id-ID", {
                         timeZone: "Asia/Jakarta",
@@ -463,15 +491,20 @@ export default function DepositsTable() {
                     </td>
                   </tr>
                   <tr>
+                    <td>Tgl Transaksi (Real)</td>
+                    <td>
+                      {new Date(delRow.performed_at).toLocaleString("id-ID", {
+                        timeZone: "Asia/Jakarta",
+                      })}
+                    </td>
+                  </tr>
+                  <tr>
                     <td>Tgl Reversal (dipilih)</td>
                     <td>
-                      <input
-                        type="datetime-local"
-                        step="1"
-                        className="border rounded px-3 py-1"
-                        value={delTxnAt}
-                        onChange={(e) => setDelTxnAt(e.target.value)}
-                      />
+                      {/* dikunci: tampil saja, tidak bisa diubah */}
+                      {new Date(delTxnAt).toLocaleString("id-ID", {
+                        timeZone: "Asia/Jakarta",
+                      })}
                     </td>
                   </tr>
                 </tbody>
