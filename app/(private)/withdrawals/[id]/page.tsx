@@ -149,7 +149,7 @@ export default async function WithdrawalDetailPage({ params }: { params: { id: s
       {/* Transfer Fee (Expense) */}
       {wd.transfer_fee_amount > 0 && (
         <div className="rounded border bg-white">
-          <div className="p-3 border-b font-semibold">Transfer Fee (EXPENSE)</div>
+          <div className="p-3 border-b font-semibold">Transfer Fee</div>
           <table className="table-grid w-full">
             <tbody>
               <tr><td className="w-56">Delta</td><td>{formatAmount(feeMut?.amount ?? -wd.transfer_fee_amount)}</td></tr>
