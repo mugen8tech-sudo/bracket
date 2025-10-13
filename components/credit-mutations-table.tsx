@@ -4,26 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
-type CreditMutationRow = {
-  id: number;
-  tenant_id: string;
-  deposit_id: number | null;
-  kind: string; // enum di DB (deposit, withdrawal, adjustment, expense, dst.)
-  amount: number; // delta (−/+)
-  credit_before: number;
-  credit_after: number;
-  txn_at: string;         // waktu dipilih (backdate)
-  performed_at: string;   // waktu klik (real)
-  description: string | null;
-  created_by: string | null; // user_id
-};
-
-type CatFilter = "ALL" | "DP" | "WD" | "ADJ" | "TOPUP";
-
+/** ================= Helpers ================= **/
 const PAGE_SIZE = 50;
 
-/** yyyy-mm-dd (Asia/Jakarta) */
-function todayYmdJakarta() {
+function todayJakartaYmd() {
+  // yyyy-mm-dd in Asia/Jakarta
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 }
 function startOfDayJakartaISO(ymd: string) {
@@ -33,147 +18,187 @@ function endOfDayJakartaISO(ymd: string) {
   return new Date(`${ymd}T23:59:59.999+07:00`).toISOString();
 }
 
-function kindToCat(kind?: string): string {
-  const k = (kind ?? "").toLowerCase();
-  if (k === "deposit") return "DP";
-  if (k === "withdrawal") return "WD";
-  if (k === "adjustment") return "ADJ";
-  if (k === "topup" || k === "credit_topup") return "TOPUP";
-  // jenis lain (mis. reversal) tetap ditampilkan apa adanya
-  return k.toUpperCase() || "-";
+// Map enum 'kind' -> bucket Cat (DP/WD/ADJ/TOPUP)
+function catFromKind(kind: string | null | undefined): "DP" | "WD" | "ADJ" | "TOPUP" | "-" {
+  const k = (kind ?? "").toUpperCase();
+  if (k === "DEPOSIT" || k === "REVERSAL_DEPOSIT") return "DP";
+  if (k === "WITHDRAWAL" || k === "REVERSAL_WITHDRAWAL") return "WD";
+  if (k === "CREDIT_ADJUSTMENT") return "ADJ";     // untuk ke depan
+  if (k === "CREDIT_TOPUP") return "TOPUP";        // untuk ke depan
+  return "-";
 }
-
-function catToKinds(cat: CatFilter): string[] | null {
+function kindsForCat(cat: "ALL" | "DP" | "WD" | "ADJ" | "TOPUP") {
   switch (cat) {
     case "DP":
-      return ["deposit"]; // reversal depo tetap punya desc "REVERSAL…" dan amount kebalikan
+      return ["DEPOSIT", "REVERSAL_DEPOSIT", "deposit", "reversal_deposit"];
     case "WD":
-      return ["withdrawal"];
+      return ["WITHDRAWAL", "REVERSAL_WITHDRAWAL", "withdrawal", "reversal_withdrawal"];
     case "ADJ":
-      return ["adjustment"];
+      return ["CREDIT_ADJUSTMENT", "credit_adjustment"];
     case "TOPUP":
-      return ["topup", "credit_topup"];
+      return ["CREDIT_TOPUP", "credit_topup"];
     default:
-      return null; // ALL
+      return [];
   }
 }
 
+/** ================= Types (mengikuti skema kamu) ================= **/
+type CreditMutation = {
+  id: number;
+  tenant_id: string;
+  deposit_id: number | null;
+  kind: string;
+  amount: number;
+  credit_before: number;
+  credit_after: number;
+  txn_at: string;        // waktu dipilih (backdate)
+  performed_at: string;  // waktu klik (real)
+  description: string | null;
+  created_by: string | null;
+};
+
+type DepositLite = {
+  id: number;
+  username: string | null;       // ambil dari deposits.username
+  opened_at: string | null;      // waktu modal dibuka (opsional)
+  txn_at: string;                // waktu dipilih/backdate
+  performed_at: string;          // waktu klik (real)
+};
+
+/** ================= Komponen ================= **/
 export default function CreditMutationsTable() {
   const supabase = supabaseBrowser();
 
-  // header balance tenant
-  const [tenantBalance, setTenantBalance] = useState<number>(0);
+  // ringkasan balance tenant
+  const [tenantCredit, setTenantCredit] = useState<number>(0);
 
   // tabel
-  const [rows, setRows] = useState<CreditMutationRow[]>([]);
+  const [rows, setRows] = useState<CreditMutation[]>([]);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // map user_id -> full_name (untuk kolom Creator)
-  const [creatorNameMap, setCreatorNameMap] = useState<Record<string, string>>(
-    {}
-  );
-
-  // filters (default hari ini)
-  const [fId, setFId] = useState<string>("");
-  const [fStart, setFStart] = useState<string>(() => todayYmdJakarta());
-  const [fFinish, setFFinish] = useState<string>(() => todayYmdJakarta());
-  const [fCat, setFCat] = useState<CatFilter>("ALL");
+  // filters (default: hari ini, filter waktu = performed_at)
+  const [fStart, setFStart] = useState<string>(todayJakartaYmd());
+  const [fFinish, setFFinish] = useState<string>(todayJakartaYmd());
+  const [fCat, setFCat] = useState<"ALL" | "DP" | "WD" | "ADJ" | "TOPUP">("ALL");
   const [fDesc, setFDesc] = useState<string>("");
+  const [fId, setFId] = useState<string>("");
 
-  // ---------- header: balance tenant ----------
+  // cache join deposits & profiles
+  const [depositMap, setDepositMap] = useState<Record<number, DepositLite>>({});
+  const [creatorNameMap, setCreatorNameMap] = useState<Record<string, string>>({});
+
+  // ----- load tenant balance -----
   useEffect(() => {
     (async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) return;
-
       const { data: prof } = await supabase
         .from("profiles")
         .select("tenant_id")
         .eq("user_id", user.id)
         .single();
-
-      if (!prof?.tenant_id) return;
-
-      const { data: tenant } = await supabase
-        .from("tenants")
-        .select("credit_balance")
-        .eq("id", prof.tenant_id)
-        .single();
-
-      setTenantBalance(tenant?.credit_balance ?? 0);
+      if (prof?.tenant_id) {
+        const { data: tenant } = await supabase
+          .from("tenants")
+          .select("credit_balance")
+          .eq("id", prof.tenant_id)
+          .single();
+        setTenantCredit(tenant?.credit_balance ?? 0);
+      }
     })();
-  }, [supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ---------- query builder ----------
+  // ----- build & run list query -----
   const buildQuery = () => {
     let q = supabase
       .from("credit_mutations")
       .select("*", { count: "exact" })
-      .order("id", { ascending: false });
+      .order("performed_at", { ascending: false });
 
-    // filter waktu HANYA di performed_at (Waktu Click/Real)
+    if (fId.trim()) {
+      const n = Number(fId.trim());
+      if (!Number.isNaN(n)) q = q.eq("id", n);
+    }
     if (fStart) q = q.gte("performed_at", startOfDayJakartaISO(fStart));
     if (fFinish) q = q.lte("performed_at", endOfDayJakartaISO(fFinish));
 
-    // filter ID (opsional)
-    const idNum = Number(fId.trim());
-    if (fId.trim() && Number.isFinite(idNum)) q = q.eq("id", idNum);
-
-    // filter Cat -> kind
-    const kinds = catToKinds(fCat);
-    if (kinds && kinds.length > 0) q = q.in("kind", kinds);
-
-    // filter Desc
     if (fDesc.trim()) q = q.ilike("description", `%${fDesc.trim()}%`);
+
+    if (fCat !== "ALL") {
+      const kinds = kindsForCat(fCat);
+      if (kinds.length > 0) q = q.in("kind", kinds as any);
+    }
 
     return q;
   };
 
-  // ---------- load rows + creator names ----------
-  const load = async (toPage = page) => {
+  const load = async (pageToLoad = page) => {
     setLoading(true);
-    const from = (toPage - 1) * PAGE_SIZE;
+    const from = (pageToLoad - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
     const { data, error, count } = await buildQuery().range(from, to);
-    setLoading(false);
-
     if (error) {
+      setLoading(false);
       alert(error.message);
       return;
     }
-
-    const list = (data as CreditMutationRow[]) ?? [];
+    const list = (data as CreditMutation[]) ?? [];
     setRows(list);
     setTotal(count ?? 0);
-    setPage(toPage);
+    setPage(pageToLoad);
 
-    // map Creator (sekali panggil untuk semua id unik)
-    const ids = [
-      ...new Set(list.map((r) => r.created_by).filter(Boolean) as string[]),
-    ];
-    if (ids.length) {
+    // Join deposits (sekali untuk semua deposit_id yang ada)
+    const depIds = Array.from(new Set(list.map((r) => r.deposit_id).filter((v): v is number => !!v)));
+    if (depIds.length > 0) {
+      const { data: deps } = await supabase
+        .from("deposits")
+        .select("id, username, opened_at, txn_at, performed_at")
+        .in("id", depIds);
+      const map: Record<number, DepositLite> = {};
+      for (const d of (deps as any[] | null) ?? []) {
+        map[d.id] = {
+          id: d.id,
+          username: d.username ?? null,
+          opened_at: d.opened_at ?? null,
+          txn_at: d.txn_at,
+          performed_at: d.performed_at,
+        };
+      }
+      setDepositMap(map);
+    } else {
+      setDepositMap({});
+    }
+
+    // Join profiles -> full_name
+    const creatIds = Array.from(
+      new Set(list.map((r) => r.created_by).filter((v): v is string => !!v))
+    );
+    if (creatIds.length > 0) {
       const { data: profs } = await supabase
         .from("profiles")
         .select("user_id, full_name")
-        .in("user_id", ids);
+        .in("user_id", creatIds);
       const map: Record<string, string> = {};
-      (profs ?? []).forEach((p: any) => {
+      for (const p of (profs as any[] | null) ?? []) {
         map[p.user_id] = p.full_name;
-      });
+      }
       setCreatorNameMap(map);
     } else {
       setCreatorNameMap({});
     }
+
+    setLoading(false);
   };
 
-  // pertama kali: load (default hari ini)
   useEffect(() => {
+    // default: load hari ini saat pertama kali buka
     load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -183,165 +208,189 @@ export default function CreditMutationsTable() {
     load(1);
   };
 
+  // helper tampil deskripsi sesuai aturan kamu
+  const renderDesc = (r: CreditMutation) => {
+    const dep = r.deposit_id ? depositMap[r.deposit_id] : undefined;
+    const username = dep?.username ?? "-";
+    const kind = (r.kind || "").toUpperCase();
+
+    if (kind === "DEPOSIT") return `Depo dari ${username}`;
+    if (kind === "REVERSAL_DEPOSIT") {
+      const t = dep?.performed_at
+        ? new Date(dep.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
+        : "-";
+      return `Reversal Depo dari ${username} (asli: ${t})`;
+    }
+    if (kind === "WITHDRAWAL") return `WD ke ${username}`;
+    if (kind === "REVERSAL_WITHDRAWAL") {
+      const t = dep?.performed_at
+        ? new Date(dep.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
+        : "-";
+      return `Reversal WD dari ${username} (asli: ${t})`;
+    }
+    // fallback gunakan description dari DB
+    return r.description ?? "-";
+  };
+
   const canPrev = page > 1;
   const canNext = page < totalPages;
 
+  const pageLabel = useMemo(() => `Page ${page} / ${totalPages}`, [page, totalPages]);
+
   return (
     <div className="space-y-3">
+      {/* header balance */}
       <div className="rounded border bg-white p-3 text-sm">
-        <b>Credit Mutations.</b> Balance sekarang {formatAmount(tenantBalance)}
+        <b>Credit Mutations.</b> Balance sekarang {formatAmount(tenantCredit)}
       </div>
 
       <div className="overflow-auto rounded border bg-white">
-        <table className="table-grid min-w-[1200px]" style={{ borderCollapse: "collapse" }}>
-          <thead>
-            {/* Baris filter (di atas header) */}
-            <tr className="filters">
-              <th className="w-20">
-                <input
-                  placeholder="Cari ID"
-                  value={fId}
-                  onChange={(e) => setFId(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && load(1)}
-                  className="w-full border rounded px-2 py-1"
-                />
-              </th>
-              <th className="w-56">
-                <div className="flex flex-col gap-1">
+        <form onSubmit={applyFilters}>
+          <table className="table-grid min-w-[1100px]" style={{ borderCollapse: "collapse" }}>
+            <thead>
+              {/* filter bar */}
+              <tr className="filters">
+                <th className="w-20">
                   <input
-                    type="date"
-                    value={fStart}
-                    onChange={(e) => setFStart(e.target.value)}
-                    className="border rounded px-2 py-1"
-                    aria-label="Start (Click)"
+                    placeholder="Cari ID"
+                    value={fId}
+                    onChange={(e) => setFId(e.target.value)}
+                    className="w-full border rounded px-2 py-1"
                   />
+                </th>
+                <th className="w-64">
+                  <div className="flex flex-col gap-1">
+                    <input
+                      type="date"
+                      value={fStart}
+                      onChange={(e) => setFStart(e.target.value)}
+                      className="border rounded px-2 py-1"
+                      aria-label="Start (Click)"
+                    />
+                    <input
+                      type="date"
+                      value={fFinish}
+                      onChange={(e) => setFFinish(e.target.value)}
+                      className="border rounded px-2 py-1"
+                      aria-label="Finish (Click)"
+                    />
+                  </div>
+                </th>
+                <th className="w-40">
+                  <select
+                    value={fCat}
+                    onChange={(e) => setFCat(e.target.value as any)}
+                    className="border rounded px-2 py-1 w-full"
+                  >
+                    <option value="ALL">ALL</option>
+                    <option value="DP">DP</option>
+                    <option value="WD">WD</option>
+                    <option value="ADJ">Adjustment</option>
+                    <option value="TOPUP">Topup</option>
+                  </select>
+                </th>
+                <th className="w-[260px]">
                   <input
-                    type="date"
-                    value={fFinish}
-                    onChange={(e) => setFFinish(e.target.value)}
-                    className="border rounded px-2 py-1"
-                    aria-label="Finish (Click)"
+                    placeholder="Desc"
+                    value={fDesc}
+                    onChange={(e) => setFDesc(e.target.value)}
+                    className="w-full border rounded px-2 py-1"
                   />
-                </div>
-              </th>
-              <th className="w-52" />
-              <th className="w-28">
-                <select
-                  value={fCat}
-                  onChange={(e) => setFCat(e.target.value as CatFilter)}
-                  className="border rounded px-2 py-1 w-full"
-                >
-                  <option>ALL</option>
-                  <option>DP</option>
-                  <option>WD</option>
-                  <option>ADJ</option>
-                  <option>TOPUP</option>
-                </select>
-              </th>
-              <th className="w-[300px]">
-                <input
-                  placeholder="Desc"
-                  value={fDesc}
-                  onChange={(e) => setFDesc(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && load(1)}
-                  className="w-full border rounded px-2 py-1"
-                />
-              </th>
-              <th />
-              <th />
-              <th />
-              <th className="w-28 text-left">
-                <button
-                  onClick={(e) => applyFilters(e as any)}
-                  className="rounded bg-blue-600 text-white px-3 py-1"
-                >
-                  Submit
-                </button>
-              </th>
-            </tr>
-
-            <tr>
-              <th className="text-left w-20">ID</th>
-              <th className="text-left w-56">Waktu Click</th>
-              <th className="text-left w-56">Waktu dipilih</th>
-              <th className="text-left w-20">Cat</th>
-              <th className="text-left min-w-[300px]">Desc</th>
-              <th className="text-left w-32">Amount</th>
-              <th className="text-left w-32">Start</th>
-              <th className="text-left w-32">Finish</th>
-              <th className="text-left w-40">Creator</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={9}>Loading…</td>
+                </th>
+                <th />
+                <th />
+                <th />
+                <th className="whitespace-nowrap">
+                  <button type="submit" className="rounded bg-blue-600 text-white px-3 py-1">
+                    submit
+                  </button>
+                </th>
               </tr>
-            ) : rows.length === 0 ? (
+
+              {/* header */}
               <tr>
-                <td colSpan={9}>No data</td>
+                <th className="text-left w-20">ID</th>
+                <th className="text-left w-64">Waktu Click</th>
+                <th className="text-left w-64">Waktu dipilih</th>
+                <th className="text-left w-28">Cat</th>
+                <th className="text-left min-w-[260px]">Desc</th>
+                <th className="text-left w-28">Amount</th>
+                <th className="text-left w-28">Start</th>
+                <th className="text-left w-28">Finish</th>
+                <th className="text-left w-40">Creator</th>
               </tr>
-            ) : (
-              rows.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.id}</td>
-                  <td>
-                    {new Date(r.performed_at).toLocaleString("id-ID", {
-                      timeZone: "Asia/Jakarta",
-                    })}
-                  </td>
-                  <td>
-                    {new Date(r.txn_at).toLocaleString("id-ID", {
-                      timeZone: "Asia/Jakarta",
-                    })}
-                  </td>
-                  <td>{kindToCat(r.kind)}</td>
-                  <td className="whitespace-pre-wrap">
-                    {r.description ?? "-"}
-                  </td>
-                  <td className="text-left">{formatAmount(r.amount)}</td>
-                  <td className="text-left">{formatAmount(r.credit_before)}</td>
-                  <td className="text-left">{formatAmount(r.credit_after)}</td>
-                  <td>
-                    {r.created_by ? creatorNameMap[r.created_by] ?? r.created_by : "-"}
-                  </td>
+            </thead>
+
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={9}>Loading…</td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td colSpan={9}>No data</td>
+                </tr>
+              ) : (
+                rows.map((r) => {
+                  const cat = catFromKind(r.kind);
+                  const creator = r.created_by
+                    ? (creatorNameMap[r.created_by] ?? r.created_by)
+                    : "-";
+                  return (
+                    <tr key={r.id}>
+                      <td>{r.id}</td>
+                      <td>
+                        {new Date(r.performed_at).toLocaleString("id-ID", {
+                          timeZone: "Asia/Jakarta",
+                        })}
+                      </td>
+                      <td>
+                        {new Date(r.txn_at).toLocaleString("id-ID", {
+                          timeZone: "Asia/Jakarta",
+                        })}
+                      </td>
+                      <td>{cat}</td>
+                      <td className="whitespace-normal break-words">{renderDesc(r)}</td>
+                      <td>{formatAmount(r.amount)}</td>
+                      <td>{formatAmount(r.credit_before)}</td>
+                      <td>{formatAmount(r.credit_after)}</td>
+                      <td>{creator}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </form>
       </div>
 
-      {/* Pagination */}
+      {/* pagination */}
       <div className="flex justify-center">
         <nav className="inline-flex items-center gap-1 text-sm select-none">
           <button
-            onClick={() => page > 1 && load(1)}
-            disabled={page <= 1}
+            onClick={() => canPrev && load(1)}
+            disabled={!canPrev}
             className="px-3 py-1 rounded border bg-white disabled:opacity-50"
           >
             First
           </button>
           <button
-            onClick={() => page > 1 && load(page - 1)}
+            onClick={() => canPrev && load(page - 1)}
             disabled={!canPrev}
             className="px-3 py-1 rounded border bg-white disabled:opacity-50"
           >
             Previous
           </button>
-          <span className="px-3 py-1 rounded border bg-white">
-            Page {page} / {totalPages}
-          </span>
+          <span className="px-3 py-1 rounded border bg-white">{pageLabel}</span>
           <button
-            onClick={() => page < totalPages && load(page + 1)}
+            onClick={() => canNext && load(page + 1)}
             disabled={!canNext}
             className="px-3 py-1 rounded border bg-white disabled:opacity-50"
           >
             Next
           </button>
           <button
-            onClick={() => page < totalPages && load(totalPages)}
+            onClick={() => canNext && load(totalPages)}
             disabled={!canNext}
             className="px-3 py-1 rounded border bg-white disabled:opacity-50"
           >
