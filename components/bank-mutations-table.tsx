@@ -17,20 +17,20 @@ type BankMutationRow = {
   id: number;
   tenant_id: string;
   bank_id: number;
-  deposit_id: number | null; // generic ref id (deposit / withdrawal)
+  deposit_id: number | null; // ref ke deposits/withdrawals
   kind: MutationKind;
   amount: number;
   balance_before: number;
   balance_after: number;
-  txn_at: string;        // waktu dipilih
+  txn_at: string;        // waktu dipilih (backdate)
   performed_at: string;  // waktu klik (real)
   description: string | null;
   created_by: string | null;
 };
 
 type BankLite = { id: number; bank_code: string; account_name: string; account_no: string; is_active: boolean; };
-type DepositLite = { id: number; username: string; lead_id: number | null; performed_at: string; };
-type WithdrawalLite = { id: number; username: string; lead_id: number | null; performed_at: string; };
+type DepositLite = { id: number; username: string; lead_id: number | null; performed_at: string };
+type WithdrawalLite = { id: number; username: string; lead_id: number | null; performed_at: string };
 type LeadLite = { id: number; name: string | null };
 type ProfileLite = { user_id: string; full_name: string };
 
@@ -44,8 +44,8 @@ const CAT_OPTIONS = [
   { key: "PENDING_DP",   label: "Pending DP" },
   { key: "SESAMA_CM",    label: "Sesama CM" },
   { key: "ADJ",          label: "Adjustment" },
-  { key: "EXPENSE",      label: "Expense" },          // khusus tombol Biaya/hal. Expenses
-  { key: "TRANSFER_FEE", label: "Biaya Transaksi" },  // fee transfer (DP/WD/TT)
+  { key: "EXPENSE",      label: "Expense" },          // khusus Expenses (bukan fee)
+  { key: "TRANSFER_FEE", label: "Biaya Transaksi" },  // EXPENSE fee WD/TT
 ] as const;
 type CatKey = typeof CAT_OPTIONS[number]["key"];
 
@@ -56,8 +56,8 @@ function kindsForCat(cat: CatKey): MutationKind[] | "EXPENSE_TRANSFER" | "ALL" {
     case "PENDING_DP": return ["PENDING_DEPOSIT"];
     case "SESAMA_CM":  return ["INTERBANK_OUT", "INTERBANK_IN"];
     case "ADJ":        return ["ADJUSTMENT"];
-    case "EXPENSE":    return ["EXPENSE"];            // nanti dipilah: BUKAN transfer fee
-    case "TRANSFER_FEE": return "EXPENSE_TRANSFER";   // khusus transfer fee
+    case "EXPENSE":    return ["EXPENSE"];          // nanti dipilah: BUKAN transfer fee
+    case "TRANSFER_FEE": return "EXPENSE_TRANSFER"; // hanya transfer fee
     default:           return "ALL";
   }
 }
@@ -72,7 +72,7 @@ function todayJakartaYMD() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 }
 
-// identifikasi baris EXPENSE yang merupakan biaya transfer (WD/DP/TT)
+// deteksi EXPENSE yang merupakan biaya transfer (WD/TT)
 function isTransferFee(desc?: string | null) {
   if (!desc) return false;
   const s = desc.toLowerCase();
@@ -142,7 +142,7 @@ export default function BankMutationsTable() {
       .from("bank_mutations")
       .select("*", { count: "exact" })
       .order("performed_at", { ascending: false })
-      .order("id", { ascending: true });
+      .order("id", { ascending: true }); // tie-breaker stabil
 
     // Filter Waktu Click (REAL)
     if (fStart) q = q.gte("performed_at", startOfDayJakartaISO(fStart));
@@ -180,7 +180,8 @@ export default function BankMutationsTable() {
       list = list.filter((r) => !isTransferFee(r.description));
     }
 
-    // --- WD+Fee pairing: pastikan WD selalu diikuti Fee‑nya ---
+    // ---- Pairing WD + Fee agar fee selalu muncul tepat setelah WD‑nya ----
+    // (hindari duplikasi & tetap tampilkan fee meski WD tidak ada di halaman ini)
     if (fCat !== "TRANSFER_FEE") {
       const feeByRef = new Map<number, BankMutationRow>();
       for (const r of list) {
@@ -189,24 +190,44 @@ export default function BankMutationsTable() {
         }
       }
 
-      const consumed = new Set<number>();
+      const usedFeeIds = new Set<number>();
       const ordered: BankMutationRow[] = [];
+
+      // pre-scan WD presence untuk setiap fee
+      const wdRefInPage = new Set<number>();
+      for (const r of list) {
+        if ((r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") && r.deposit_id) {
+          wdRefInPage.add(r.deposit_id);
+        }
+      }
 
       for (const r of list) {
         const isFee = r.kind === "EXPENSE" && isTransferFee(r.description) && !!r.deposit_id;
+
         if (isFee) {
-          // tunda penempatan fee; akan disisipkan setelah WD terkait
-          if (!consumed.has(r.id)) continue;
+          // Jika WD pasangan ADA di halaman -> SKIP di sini (akan disisipkan setelah WD)
+          // Jika TIDAK ADA -> tampilkan fee apa adanya
+          if (wdRefInPage.has(r.deposit_id!)) {
+            // jangan tampilkan sekarang (hindari duplikasi)
+            continue;
+          } else {
+            if (!usedFeeIds.has(r.id)) {
+              ordered.push(r);
+              usedFeeIds.add(r.id);
+            }
+            continue;
+          }
         }
 
+        // Bukan fee → tampilkan
         ordered.push(r);
 
-        const isWd = (r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") && !!r.deposit_id;
-        if (isWd) {
-          const fee = feeByRef.get(r.deposit_id!);
-          if (fee && !consumed.has(fee.id)) {
+        // Jika ini WD / REVERSAL_WD → sisipkan fee pasangannya segera setelahnya
+        if ((r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") && r.deposit_id) {
+          const fee = feeByRef.get(r.deposit_id);
+          if (fee && !usedFeeIds.has(fee.id)) {
             ordered.push(fee);
-            consumed.add(fee.id);
+            usedFeeIds.add(fee.id);
           }
         }
       }
@@ -261,7 +282,7 @@ export default function BankMutationsTable() {
     return `[${b.bank_code}] ${b.account_name} - ${b.account_no}`;
   };
 
-  // ===== Cat kolom: khusus EXPENSE transfer fee -> "Biaya Transaksi"
+  // ===== Cat kolom: EXPENSE transfer fee → "Biaya Transaksi"
   const catLabelForRow = (r: BankMutationRow): string => {
     if (r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") return "Depo";
     if (r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") return "WD";
@@ -304,7 +325,6 @@ export default function BankMutationsTable() {
         return `${base} ${w?.username ?? "-"}`;
       }
       if (s.includes("tt") || s.includes("interbank")) {
-        // fee transfer sesama CM
         const b = banks.find(x => x.id === r.bank_id);
         return `Fee Sesama CM dari ${b ? `[${b.bank_code}] ${b.account_name}` : "-"}`;
       }
@@ -313,7 +333,7 @@ export default function BankMutationsTable() {
     return r.description ?? "-";
   };
 
-  // ===== Tag [REVERSAL-<performed_at_asli>] di label bank
+  // ===== Tag [REVERSAL-<performed_at_asli>] khusus baris reversal
   const reversalTag = (r: BankMutationRow) => {
     if (r.kind === "REVERSAL_DEPOSIT") {
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
@@ -488,7 +508,7 @@ export default function BankMutationsTable() {
         <nav className="inline-flex items-center gap-1 text-sm select-none">
           <button onClick={() => page > 1 && load(1)} disabled={page <= 1} className="px-3 py-1 rounded border bg-white disabled:opacity-50">First</button>
           <button onClick={() => page > 1 && load(page - 1)} disabled={page <= 1} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Previous</button>
-          <span className="px-3 py-1 rounded border bg-white">Page {page} / {totalPages}</span>
+          <span className="px-3 py-1 rounded border bg-white">Page {page} / {totalPagesTxt}</span>
           <button onClick={() => page < totalPages && load(page + 1)} disabled={page >= totalPages} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Next</button>
           <button onClick={() => page < totalPages && load(totalPages)} disabled={page >= totalPages} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Last</button>
         </nav>
