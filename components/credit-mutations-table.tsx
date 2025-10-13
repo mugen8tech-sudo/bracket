@@ -312,7 +312,7 @@ export default function CreditMutationsTable() {
               <tr>
                 <th className="text-left w-20">ID</th>
                 <th className="text-left w-64">Waktu Click</th>
-                <th className="text-left w-64">Waktu dipilih</th>
+                <th className="text-left w-50">Waktu dipilih</th>
                 <th className="text-left w-28">Cat</th>
                 <th className="text-left min-w-[260px]">Desc</th>
                 <th className="text-left w-28">Amount</th>
