@@ -65,6 +65,15 @@ type DepositLite = {
   performed_at: string;          // waktu klik (real)
 };
 
+type WithdrawalLite = {
+  id: number;
+  username: string | null;       // ambil dari deposits.username
+  opened_at: string | null;      // waktu modal dibuka (opsional)
+  txn_at: string;                // waktu dipilih/backdate
+  performed_at: string;          // waktu klik (real)
+};
+
+
 /** ================= Komponen ================= **/
 export default function CreditMutationsTable() {
   const supabase = supabaseBrowser();
@@ -88,6 +97,7 @@ export default function CreditMutationsTable() {
 
   // cache join deposits & profiles
   const [depositMap, setDepositMap] = useState<Record<number, DepositLite>>({});
+  const [withdrawalMap, setWithdrawalMap] = useState<Record<number, WithdrawalLite>>({});
   const [creatorNameMap, setCreatorNameMap] = useState<Record<string, string>>({});
 
   // ----- load tenant balance -----
@@ -155,25 +165,20 @@ export default function CreditMutationsTable() {
     setPage(pageToLoad);
 
     // Join deposits (sekali untuk semua deposit_id yang ada)
-    const depIds = Array.from(new Set(list.map((r) => r.deposit_id).filter((v): v is number => !!v)));
-    if (depIds.length > 0) {
-      const { data: deps } = await supabase
-        .from("deposits")
-        .select("id, username, opened_at, txn_at, performed_at")
-        .in("id", depIds);
-      const map: Record<number, DepositLite> = {};
-      for (const d of (deps as any[] | null) ?? []) {
-        map[d.id] = {
-          id: d.id,
-          username: d.username ?? null,
-          opened_at: d.opened_at ?? null,
-          txn_at: d.txn_at,
-          performed_at: d.performed_at,
-        };
-      }
-      setDepositMap(map);
+    const refIds = Array.from(new Set(list.map((r) => r.deposit_id).filter((v): v is number => !!v)));
+    if (refIds.length > 0) {
+      const [{ data: deps }, { data: wds }] = await Promise.all([
+        supabase.from("deposits").select("id, username, opened_at, txn_at, performed_at").in("id", refIds),
+        supabase.from("withdrawals").select("id, username, opened_at, txn_at, performed_at").in("id", refIds),
+      ]);
+      const depMap: Record<number, DepositLite> = {};
+      const wdMap : Record<number, WithdrawalLite> = {};
+      for (const d of (deps as any[] | null) ?? []) depMap[d.id] = d;
+      for (const w of (wds  as any[] | null) ?? []) wdMap[w.id]  = w;
+      setDepositMap(depMap);
+      setWithdrawalMap(wdMap);
     } else {
-      setDepositMap({});
+      setDepositMap({}); setWithdrawalMap({});
     }
 
     // Join profiles -> full_name
@@ -210,25 +215,25 @@ export default function CreditMutationsTable() {
 
   // helper tampil deskripsi sesuai aturan kamu
   const renderDesc = (r: CreditMutation) => {
-    const dep = r.deposit_id ? depositMap[r.deposit_id] : undefined;
-    const username = dep?.username ?? "-";
     const kind = (r.kind || "").toUpperCase();
-
-    if (kind === "DEPOSIT") return `Depo dari ${username}`;
+    if (kind === "DEPOSIT") {
+      const dep = r.deposit_id ? depositMap[r.deposit_id] : undefined;
+      return `Depo dari ${dep?.username ?? "-"}`;
+    }
     if (kind === "REVERSAL_DEPOSIT") {
-      const t = dep?.performed_at
-        ? new Date(dep.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
-        : "-";
-      return `Reversal Depo dari ${username} (${t})`;
+      const dep = r.deposit_id ? depositMap[r.deposit_id] : undefined;
+      const t = dep?.performed_at ? new Date(dep.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : "-";
+      return `Reversal Depo dari ${dep?.username ?? "-"} (${t})`;
     }
-    if (kind === "WITHDRAWAL") return `WD ke ${username}`;
+    if (kind === "WITHDRAWAL") {
+      const wd = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
+      return `WD ke ${wd?.username ?? "-"}`;
+    }
     if (kind === "REVERSAL_WITHDRAWAL") {
-      const t = dep?.performed_at
-        ? new Date(dep.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
-        : "-";
-      return `Reversal WD dari ${username} (${t})`;
+      const wd = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
+      const t = wd?.performed_at ? new Date(wd.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : "-";
+      return `Reversal WD dari ${wd?.username ?? "-"} (${t})`;
     }
-    // fallback gunakan description dari DB
     return r.description ?? "-";
   };
 
