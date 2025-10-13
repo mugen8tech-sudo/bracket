@@ -215,7 +215,7 @@ export default function WithdrawalsTable() {
               <th className="text-left w-24">ID</th>
               <th className="text-left min-w-[220px]">Lead</th>
               <th className="text-left min-w-[180px]">Player</th>
-              <th className="text-left w-32">Amount (Gross)</th>
+              <th className="text-left w-32">Amount</th>
               <th className="text-left w-52">Tgl (dipilih)</th>
               <th className="text-left w-32">By</th>
               <th className="text-left w-24">Reversed?</th>
