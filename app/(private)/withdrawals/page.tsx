@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-import DepositsTable from "@/components/withdrawals-table";
+import WithdrawalsTable from "@/components/withdrawals-table";
 
 export default function WihtdrawalsPage() {
   return (
