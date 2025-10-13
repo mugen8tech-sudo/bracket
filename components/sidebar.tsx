@@ -12,7 +12,7 @@ export default function Sidebar() {
     { label: "Leads", href: "/leads", enabled: true },
     { label: "Banks", href: "/banks", enabled: true },
     { label: "Deposits", href: "/deposits", enabled: true },
-    { label: "Withdrawals", href: "#", enabled: false },
+    { label: "Withdrawals", href: "/withdrawals", enabled: true },
     { label: "Pending Deposits", href: "#", enabled: false },
     { label: "Interbank Transfer", href: "#", enabled: false },
     { label: "Bank Adjustment", href: "#", enabled: false },
