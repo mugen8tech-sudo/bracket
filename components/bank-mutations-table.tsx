@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
+/** ================= Types ================= **/
 type MutationKind =
   | "DEPOSIT" | "REVERSAL_DEPOSIT"
   | "WITHDRAWAL" | "REVERSAL_WITHDRAWAL"
@@ -16,76 +17,49 @@ type BankMutationRow = {
   id: number;
   tenant_id: string;
   bank_id: number;
-  deposit_id: number | null;
+  deposit_id: number | null; // generic ref id (deposit / withdrawal)
   kind: MutationKind;
   amount: number;
   balance_before: number;
   balance_after: number;
-  txn_at: string;        // waktu dipilih (backdate)
+  txn_at: string;        // waktu dipilih
   performed_at: string;  // waktu klik (real)
   description: string | null;
   created_by: string | null;
 };
 
-type BankLite = {
-  id: number;
-  bank_code: string;
-  account_name: string;
-  account_no: string;
-  is_active: boolean;
-};
-
-type DepositLite = {
-  id: number;
-  username: string;
-  lead_id: number | null;
-  performed_at: string; // waktu real saat dibuat (untuk tag reversal)
-};
-
-type WithdrawalLite = {
-  id: number;
-  username: string;
-  lead_id: number | null;
-  performed_at: string; // waktu real saat dibuat (untuk tag reversal)
-};
-
+type BankLite = { id: number; bank_code: string; account_name: string; account_no: string; is_active: boolean; };
+type DepositLite = { id: number; username: string; lead_id: number | null; performed_at: string; };
+type WithdrawalLite = { id: number; username: string; lead_id: number | null; performed_at: string; };
 type LeadLite = { id: number; name: string | null };
 type ProfileLite = { user_id: string; full_name: string };
 
+/** ================= Helpers ================= **/
 const PAGE_SIZE = 50;
 
 const CAT_OPTIONS = [
-  { key: "ALL", label: "All" },
-  { key: "DEPO", label: "Depo" },
-  { key: "WD", label: "WD" },
-  { key: "PENDING_DP", label: "Pending DP" },
-  { key: "SESAMA_CM", label: "Sesama CM" },
-  { key: "ADJ", label: "Adjustment" },
-  { key: "EXPENSE", label: "Expense" },
-  { key: "TRANSFER_FEE", label: "Biaya Transfer" },
+  { key: "ALL",          label: "All" },
+  { key: "DEPO",         label: "Depo" },
+  { key: "WD",           label: "WD" },
+  { key: "PENDING_DP",   label: "Pending DP" },
+  { key: "SESAMA_CM",    label: "Sesama CM" },
+  { key: "ADJ",          label: "Adjustment" },
+  { key: "EXPENSE",      label: "Expense" },          // khusus tombol Biaya/hal. Expenses
+  { key: "TRANSFER_FEE", label: "Biaya Transaksi" },  // fee transfer (DP/WD/TT)
 ] as const;
 type CatKey = typeof CAT_OPTIONS[number]["key"];
 
 function kindsForCat(cat: CatKey): MutationKind[] | "EXPENSE_TRANSFER" | "ALL" {
   switch (cat) {
-    case "DEPO": return ["DEPOSIT", "REVERSAL_DEPOSIT"];
-    case "WD": return ["WITHDRAWAL", "REVERSAL_WITHDRAWAL"];
+    case "DEPO":       return ["DEPOSIT", "REVERSAL_DEPOSIT"];
+    case "WD":         return ["WITHDRAWAL", "REVERSAL_WITHDRAWAL"];
     case "PENDING_DP": return ["PENDING_DEPOSIT"];
-    case "SESAMA_CM": return ["INTERBANK_OUT", "INTERBANK_IN"];
-    case "ADJ": return ["ADJUSTMENT"];
-    case "EXPENSE": return ["EXPENSE"];          // nanti dipilah: bukan transfer fee
-    case "TRANSFER_FEE": return "EXPENSE_TRANSFER";
-    default: return "ALL";
+    case "SESAMA_CM":  return ["INTERBANK_OUT", "INTERBANK_IN"];
+    case "ADJ":        return ["ADJUSTMENT"];
+    case "EXPENSE":    return ["EXPENSE"];            // nanti dipilah: BUKAN transfer fee
+    case "TRANSFER_FEE": return "EXPENSE_TRANSFER";   // khusus transfer fee
+    default:           return "ALL";
   }
-}
-
-function labelCat(kind: MutationKind): string {
-  if (kind === "DEPOSIT" || kind === "REVERSAL_DEPOSIT") return "Depo";
-  if (kind === "WITHDRAWAL" || kind === "REVERSAL_WITHDRAWAL") return "WD";
-  if (kind === "PENDING_DEPOSIT") return "Pending DP";
-  if (kind === "INTERBANK_OUT" || kind === "INTERBANK_IN") return "Sesama CM";
-  if (kind === "ADJUSTMENT") return "Adjustment";
-  return "Expense";
 }
 
 function startOfDayJakartaISO(d: string) {
@@ -98,6 +72,7 @@ function todayJakartaYMD() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 }
 
+// identifikasi baris EXPENSE yang merupakan biaya transfer (WD/DP/TT)
 function isTransferFee(desc?: string | null) {
   if (!desc) return false;
   const s = desc.toLowerCase();
@@ -107,11 +82,13 @@ function isTransferFee(desc?: string | null) {
     s.includes("fee transfer") ||
     s.includes("fee wd") ||
     s.includes("wd fee") ||
+    s.includes("reversal wd fee") ||
     s.includes("tt fee") ||
     s.includes("interbank fee")
   );
 }
 
+/** ================= Komponen ================= **/
 export default function BankMutationsTable() {
   const supabase = supabaseBrowser();
 
@@ -137,7 +114,7 @@ export default function BankMutationsTable() {
   const [fBankId, setFBankId] = useState<number | "">("");
   const [fDesc, setFDesc] = useState("");
 
-  // load daftar bank tenant (aktif & non-aktif)
+  // load daftar bank tenant
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -154,7 +131,8 @@ export default function BankMutationsTable() {
         setBanks((data as BankLite[]) ?? []);
       }
     })();
-  }, [supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // query utama
   const load = async (pageToLoad = page) => {
@@ -193,7 +171,7 @@ export default function BankMutationsTable() {
     const { data, error, count } = await q.range(from, to);
     if (error) { setLoading(false); alert(error.message); return; }
 
-    // Pasca-filter Expense vs Biaya Transfer
+    // Pasca-filter Expense vs Biaya Transaksi
     let list = (data as BankMutationRow[]) ?? [];
     if (kinds === "EXPENSE_TRANSFER") {
       list = list.filter((r) => isTransferFee(r.description));
@@ -205,35 +183,42 @@ export default function BankMutationsTable() {
     setTotal(count ?? list.length);
     setPage(pageToLoad);
 
-    // lookups batch: deposit, creator, lead
+    // lookups batch: deposits + withdrawals + creator + lead
     const refIds = Array.from(new Set(list.map(r => r.deposit_id).filter((v): v is number => !!v)));
+    const creatorIds = Array.from(new Set(list.map(r => r.created_by).filter((v): v is string => !!v)));
 
-    const [depRes, wdRes] = await Promise.all([
-      refIds.length ? supabase.from("deposits").select("id, username, lead_id, performed_at").in("id", refIds) : Promise.resolve({ data: [] as any[] }),
-      refIds.length ? supabase.from("withdrawals").select("id, username, lead_id, performed_at").in("id", refIds) : Promise.resolve({ data: [] as any[] }),
+    const [depRes, wdRes, profRes] = await Promise.all([
+      refIds.length
+        ? supabase.from("deposits").select("id, username, lead_id, performed_at").in("id", refIds)
+        : Promise.resolve({ data: [] as any[] }),
+      refIds.length
+        ? supabase.from("withdrawals").select("id, username, lead_id, performed_at").in("id", refIds)
+        : Promise.resolve({ data: [] as any[] }),
+      creatorIds.length
+        ? supabase.from("profiles").select("user_id, full_name").in("user_id", creatorIds)
+        : Promise.resolve({ data: [] as any[] }),
     ]);
 
     const depList = (depRes.data as DepositLite[]) ?? [];
-    const wdList  = (wdRes.data  as WithdrawalLite[]) ?? [];
+    const wdList  = (wdRes.data as WithdrawalLite[]) ?? [];
     setDepositMap(Object.fromEntries(depList.map(d => [d.id, d])));
     setWithdrawalMap(Object.fromEntries(wdList.map(d => [d.id, d])));
 
-    // lookups lead
-    const leadIds = Array.from(
-      new Set([...depList.map(d => d.lead_id), ...wdList.map(d => d.lead_id)].filter((v): v is number => !!v))
-    );
-    const leadList = leadIds.length ? ((await supabase.from("leads").select("id, name").in("id", leadIds)).data as LeadLite[] ?? []) : [];
+    const leadIds = Array.from(new Set(
+      [...depList.map(d => d.lead_id), ...wdList.map(w => w.lead_id)].filter((v): v is number => !!v)
+    ));
+    const leadList = leadIds.length
+      ? ((await supabase.from("leads").select("id, name").in("id", leadIds)).data as LeadLite[] ?? [])
+      : [];
     setLeadMap(Object.fromEntries(leadList.map(l => [l.id, l])));
 
-    // lookups creator
-    const creatorIds = Array.from(new Set(list.map(r => r.created_by).filter((v): v is string => !!v)));
-    const profList = creatorIds.length ? ((await supabase.from("profiles").select("user_id, full_name").in("user_id", creatorIds)).data as ProfileLite[] ?? []) : [];
+    const profList = (profRes.data as ProfileLite[]) ?? [];
     setCreatorMap(Object.fromEntries(profList.map(p => [p.user_id, p.full_name])));
 
     setLoading(false);
   };
 
-  useEffect(() => { load(1); }, []); // eslint-disable-line
+  useEffect(() => { load(1); /* initial */ }, []); // eslint-disable-line
 
   const bankLabel = (id: number) => {
     const b = banks.find(x => x.id === id);
@@ -241,26 +226,50 @@ export default function BankMutationsTable() {
     return `[${b.bank_code}] ${b.account_name} - ${b.account_no}`;
   };
 
+  // ===== Cat kolom: khusus EXPENSE transfer fee -> "Biaya Transaksi"
+  const catLabelForRow = (r: BankMutationRow): string => {
+    if (r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") return "Depo";
+    if (r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") return "WD";
+    if (r.kind === "PENDING_DEPOSIT") return "Pending DP";
+    if (r.kind === "INTERBANK_OUT" || r.kind === "INTERBANK_IN") return "Sesama CM";
+    if (r.kind === "ADJUSTMENT") return "Adjustment";
+    if (r.kind === "EXPENSE") {
+      return isTransferFee(r.description) ? "Biaya Transaksi" : "Expense";
+    }
+    return "-";
+  };
+
+  // ===== Info tambahan (username/lead + wording)
   const extraInfo = (r: BankMutationRow): string => {
-    if (r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") {
+    if (r.kind === "DEPOSIT") {
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
       const leadName = d?.lead_id ? (leadMap[d.lead_id!]?.name ?? "") : "";
-      const base = r.kind === "DEPOSIT" ? "Depo dari" : "Reversal Depo dari";
-      return `${base} ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
+      return `Depo dari ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
     }
-    if (r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") {
+    if (r.kind === "REVERSAL_DEPOSIT") {
+      const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
+      const leadName = d?.lead_id ? (leadMap[d.lead_id!]?.name ?? "") : "";
+      return `Reversal Depo dari ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
+    }
+    if (r.kind === "WITHDRAWAL") {
       const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
       const leadName = w?.lead_id ? (leadMap[w.lead_id!]?.name ?? "") : "";
-      const base = r.kind === "WITHDRAWAL" ? "WD ke" : "Reversal WD ke";
-      return `${base} ${w?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
+      return `WD ke ${w?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
+    }
+    if (r.kind === "REVERSAL_WITHDRAWAL") {
+      const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
+      const leadName = w?.lead_id ? (leadMap[w.lead_id!]?.name ?? "") : "";
+      return `Reversal WD dari ${w?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
     }
     if (r.kind === "EXPENSE" && isTransferFee(r.description)) {
       const s = (r.description || "").toLowerCase();
       if (s.includes("wd")) {
         const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
-        return `Fee WD dari ${w?.username ?? "-"}`;
+        const base = s.includes("reversal") ? "Reversal Fee WD dari" : "Fee WD dari";
+        return `${base} ${w?.username ?? "-"}`;
       }
       if (s.includes("tt") || s.includes("interbank")) {
+        // fee transfer sesama CM
         const b = banks.find(x => x.id === r.bank_id);
         return `Fee Sesama CM dari ${b ? `[${b.bank_code}] ${b.account_name}` : "-"}`;
       }
@@ -269,19 +278,25 @@ export default function BankMutationsTable() {
     return r.description ?? "-";
   };
 
+  // ===== Tag [REVERSAL-<performed_at_asli>] di label bank
   const reversalTag = (r: BankMutationRow) => {
     if (r.kind === "REVERSAL_DEPOSIT") {
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
-      const madeAt = d?.performed_at ? new Date(d.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : "-";
+      const madeAt = d?.performed_at
+        ? new Date(d.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
+        : "-";
       return `[REVERSAL-${madeAt}]`;
     }
     if (r.kind === "REVERSAL_WITHDRAWAL") {
       const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
-      const madeAt = w?.performed_at ? new Date(w.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : "-";
+      const madeAt = w?.performed_at
+        ? new Date(w.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
+        : "-";
       return `[REVERSAL-${madeAt}]`;
     }
     return null;
   };
+
   const totalPagesTxt = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
@@ -293,7 +308,7 @@ export default function BankMutationsTable() {
       <div className="overflow-auto rounded border bg-white">
         <table className="table-grid min-w-[1250px]" style={{ borderCollapse: "collapse" }}>
           <thead>
-            {/* ===== ROW FILTERS (di atas HEADER) ===== */}
+            {/* ===== FILTER BAR ===== */}
             <tr className="filters">
               {/* ID */}
               <th className="w-24">
@@ -306,7 +321,7 @@ export default function BankMutationsTable() {
                 />
               </th>
 
-              {/* ✨ WAKTU CLICK: Start/Finish (atas-bawah seperti Leads/Deposits) */}
+              {/* WAKTU CLICK start/finish */}
               <th className="w-56">
                 <div className="flex flex-col gap-1">
                   <input
@@ -326,7 +341,7 @@ export default function BankMutationsTable() {
                 </div>
               </th>
 
-              {/* Waktu Dipilih: tidak ada filter */}
+              {/* Waktu Dipilih — tidak difilter */}
               <th className="w-56"></th>
 
               {/* Cat */}
@@ -376,16 +391,13 @@ export default function BankMutationsTable() {
 
               {/* Submit */}
               <th className="w-28">
-                <button
-                  onClick={() => load(1)}
-                  className="rounded bg-blue-600 text-white px-3 py-1"
-                >
+                <button onClick={() => load(1)} className="rounded bg-blue-600 text-white px-3 py-1">
                   submit
                 </button>
               </th>
             </tr>
 
-            {/* ===== ROW HEADER ===== */}
+            {/* ===== HEADER ===== */}
             <tr>
               <th className="text-left w-24">ID</th>
               <th className="text-left w-56">Waktu Click</th>
@@ -414,7 +426,7 @@ export default function BankMutationsTable() {
                     <td>{r.id}</td>
                     <td>{new Date(r.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
                     <td>{new Date(r.txn_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
-                    <td>{labelCat(r.kind)}</td>
+                    <td>{catLabelForRow(r)}</td>
                     <td className="whitespace-normal break-words">
                       <div className="font-semibold">
                         {bankLabel(r.bank_id)}{" "}
