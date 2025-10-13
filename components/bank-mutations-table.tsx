@@ -233,7 +233,7 @@ export default function BankMutationsTable() {
     setLoading(false);
   };
 
-  useEffect(() => { load(1); /* initial */ }, []); // eslint-disable-line
+  useEffect(() => { load(1); }, []); // eslint-disable-line
 
   const bankLabel = (id: number) => {
     const b = banks.find(x => x.id === id);
@@ -242,31 +242,22 @@ export default function BankMutationsTable() {
   };
 
   const extraInfo = (r: BankMutationRow): string => {
-    if (r.kind === "DEPOSIT") {
+    if (r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") {
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
-      const leadName = d?.lead_id ? (leadMap[d.lead_id]?.name ?? "") : "";
-      return `Depo dari ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
+      const leadName = d?.lead_id ? (leadMap[d.lead_id!]?.name ?? "") : "";
+      const base = r.kind === "DEPOSIT" ? "Depo dari" : "Reversal Depo dari";
+      return `${base} ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
     }
-    if (r.kind === "REVERSAL_DEPOSIT") {
-      const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
-      const leadName = d?.lead_id ? (leadMap[d.lead_id]?.name ?? "") : "";
-      return `Reversal Depo dari ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
-    }
-    if (r.kind === "WITHDRAWAL") {
-      const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
-      const leadName = d?.lead_id ? (leadMap[d.lead_id]?.name ?? "") : "";
-      return `WD ke ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
-    }
-    if (r.kind === "REVERSAL_WITHDRAWAL") {
-      const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
-      const leadName = d?.lead_id ? (leadMap[d.lead_id]?.name ?? "") : "";
-      return `Reversal WD ke ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
+    if (r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") {
+      const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
+      const leadName = w?.lead_id ? (leadMap[w.lead_id!]?.name ?? "") : "";
+      const base = r.kind === "WITHDRAWAL" ? "WD ke" : "Reversal WD ke";
+      return `${base} ${w?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
     }
     if (r.kind === "EXPENSE" && isTransferFee(r.description)) {
-      // fee transfer khusus
       const s = (r.description || "").toLowerCase();
       if (s.includes("wd")) {
-        const d = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
+        const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
         return `Fee WD dari ${w?.username ?? "-"}`;
       }
       if (s.includes("tt") || s.includes("interbank")) {
@@ -278,6 +269,20 @@ export default function BankMutationsTable() {
     return r.description ?? "-";
   };
 
+  const reversalTag = (r: BankMutationRow) => {
+    if (r.kind === "REVERSAL_DEPOSIT") {
+      const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
+      const madeAt = d?.performed_at ? new Date(d.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : "-";
+      return `[REVERSAL-${madeAt}]`;
+    }
+    if (r.kind === "REVERSAL_WITHDRAWAL") {
+      const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
+      const madeAt = w?.performed_at ? new Date(w.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : "-";
+      return `[REVERSAL-${madeAt}]`;
+    }
+    return null;
+  };
+  
   const reversalTag = (r: BankMutationRow) => {
     if (r.kind === "REVERSAL_DEPOSIT") {
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
