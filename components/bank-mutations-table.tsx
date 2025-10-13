@@ -142,6 +142,7 @@ export default function BankMutationsTable() {
       .from("bank_mutations")
       .select("*", { count: "exact" })
       .order("performed_at", { ascending: false });
+      .order("id", { ascending: true });
 
     // Filter Waktu Click (REAL)
     if (fStart) q = q.gte("performed_at", startOfDayJakartaISO(fStart));
@@ -177,6 +178,40 @@ export default function BankMutationsTable() {
       list = list.filter((r) => isTransferFee(r.description));
     } else if (Array.isArray(kinds) && kinds.length === 1 && kinds[0] === "EXPENSE" && fCat === "EXPENSE") {
       list = list.filter((r) => !isTransferFee(r.description));
+    }
+
+    // --- WD+Fee pairing: pastikan WD selalu diikuti Fee‑nya ---
+    if (fCat !== "TRANSFER_FEE") {
+      const feeByRef = new Map<number, BankMutationRow>();
+      for (const r of list) {
+        if (r.kind === "EXPENSE" && isTransferFee(r.description) && r.deposit_id) {
+          feeByRef.set(r.deposit_id, r);
+        }
+      }
+
+      const consumed = new Set<number>();
+      const ordered: BankMutationRow[] = [];
+
+      for (const r of list) {
+        const isFee = r.kind === "EXPENSE" && isTransferFee(r.description) && !!r.deposit_id;
+        if (isFee) {
+          // tunda penempatan fee; akan disisipkan setelah WD terkait
+          if (!consumed.has(r.id)) continue;
+        }
+
+        ordered.push(r);
+
+        const isWd = (r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") && !!r.deposit_id;
+        if (isWd) {
+          const fee = feeByRef.get(r.deposit_id!);
+          if (fee && !consumed.has(fee.id)) {
+            ordered.push(fee);
+            consumed.add(fee.id);
+          }
+        }
+      }
+
+      list = ordered;
     }
 
     setRows(list);
