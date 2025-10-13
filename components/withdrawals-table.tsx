@@ -199,6 +199,7 @@ export default function WithdrawalsTable() {
                 </div>
               </th>
               <th></th>
+              <th></th>
               <th>
                 <select value={fDeleted} onChange={(e) => setFDeleted(e.target.value as any)} className="border rounded px-2 py-1">
                   <option value="ALL">ALL</option>
