@@ -277,7 +277,7 @@ export default function CreditMutationsTable() {
                   </div>
                 </th>
                 <th className="w-32" />
-                <th className="w-40">
+                <th className="w-28">
                   <select
                     value={fCat}
                     onChange={(e) => setFCat(e.target.value as any)}
