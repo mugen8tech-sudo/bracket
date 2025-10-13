@@ -42,6 +42,13 @@ type DepositLite = {
   performed_at: string; // waktu real saat dibuat (untuk tag reversal)
 };
 
+type WithdrawalLite = {
+  id: number;
+  username: string;
+  lead_id: number | null;
+  performed_at: string; // waktu real saat dibuat (untuk tag reversal)
+};
+
 type LeadLite = { id: number; name: string | null };
 type ProfileLite = { user_id: string; full_name: string };
 
@@ -118,6 +125,7 @@ export default function BankMutationsTable() {
 
   // lookups
   const [depositMap, setDepositMap] = useState<Record<number, DepositLite>>({});
+  const [withdrawalMap, setWithdrawalMap] = useState<Record<number, WithdrawalLite>>({});
   const [leadMap, setLeadMap] = useState<Record<number, LeadLite>>({});
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({});
 
@@ -198,12 +206,15 @@ export default function BankMutationsTable() {
     setPage(pageToLoad);
 
     // lookups batch: deposit, creator, lead
-    const depositIds = Array.from(new Set(list.map(r => r.deposit_id).filter((v): v is number => !!v)));
+    const refIds = Array.from(new Set(list.map(r => r.deposit_id).filter((v): v is number => !!v)));
     const creatorIds = Array.from(new Set(list.map(r => r.created_by).filter((v): v is string => !!v)));
 
-    const [depRes, profRes] = await Promise.all([
-      depositIds.length
-        ? supabase.from("deposits").select("id, username, lead_id, performed_at").in("id", depositIds)
+    const [depRes, wdRes, profRes] = await Promise.all([
+      refIds.length
+        ? supabase.from("deposits").select("id, username, lead_id, performed_at").in("id", refIds)
+        : Promise.resolve({ data: [] as any[] }),
+      refIds.length
+        ? supabase.from("withdrawals").select("id, username, lead_id, performed_at").in("id", refIds)
         : Promise.resolve({ data: [] as any[] }),
       creatorIds.length
         ? supabase.from("profiles").select("user_id, full_name").in("user_id", creatorIds)
@@ -211,9 +222,11 @@ export default function BankMutationsTable() {
     ]);
 
     const depList = (depRes.data as DepositLite[]) ?? [];
+    const wdList  = (wdRes.data  as WithdrawalLite[]) ?? [];
     setDepositMap(Object.fromEntries(depList.map(d => [d.id, d])));
+    setWithdrawalMap(Object.fromEntries(wdList.map(d => [d.id, d])));
 
-    const leadIds = Array.from(new Set(depList.map(d => d.lead_id).filter((v): v is number => !!v)));
+    const leadIds = Array.from(new Set(depList.map(d => d.lead_id), wdList.map(d => d.lead_id).filter((v): v is number => !!v)));
     const leadList = leadIds.length ? ((await supabase.from("leads").select("id, name").in("id", leadIds)).data as LeadLite[] ?? []) : [];
     setLeadMap(Object.fromEntries(leadList.map(l => [l.id, l])));
 
@@ -256,8 +269,8 @@ export default function BankMutationsTable() {
       // fee transfer khusus
       const s = (r.description || "").toLowerCase();
       if (s.includes("wd")) {
-        const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
-        return `Fee WD dari ${d?.username ?? "-"}`;
+        const d = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
+        return `Fee WD dari ${w?.username ?? "-"}`;
       }
       if (s.includes("tt") || s.includes("interbank")) {
         const b = banks.find(x => x.id === r.bank_id);
@@ -269,14 +282,18 @@ export default function BankMutationsTable() {
   };
 
   const reversalTag = (r: BankMutationRow) => {
-    if (r.kind !== "REVERSAL_DEPOSIT" && r.kind !== "REVERSAL_WITHDRAWAL") return null;
-    const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
-    const madeAt = d?.performed_at
-      ? new Date(d.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
-      : "-";
-    return `[REVERSAL-${madeAt}]`;
+    if (r.kind === "REVERSAL_DEPOSIT") {
+      const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
+      const madeAt = d?.performed_at ? new Date(d.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : "-";
+      return `[REVERSAL-${madeAt}]`;
+    }
+    if (r.kind === "REVERSAL_WITHDRAWAL") {
+      const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
+      const madeAt = w?.performed_at ? new Date(w.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : "-";
+      return `[REVERSAL-${madeAt}]`;
+    }
+    return null;
   };
-
   const totalPagesTxt = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
