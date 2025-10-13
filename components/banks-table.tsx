@@ -479,8 +479,8 @@ export default function BanksTable() {
       p_lead_id: leadPicked.id,
       p_username: leadPicked.username,
       p_amount_gross: gross,
-      p_txn_at_opened: dpOpenedISO,
-      p_txn_at_final: txnFinalISO,
+      p_opened_at: dpOpenedISO,  
+      p_txn_at: txnFinalISO,
       p_promo_code: null,
       p_description: dpDesc || null,
     });
