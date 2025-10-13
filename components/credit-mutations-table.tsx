@@ -219,14 +219,14 @@ export default function CreditMutationsTable() {
       const t = dep?.performed_at
         ? new Date(dep.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
         : "-";
-      return `Reversal Depo dari ${username} (asli: ${t})`;
+      return `Reversal Depo dari ${username} ${t}`;
     }
     if (kind === "WITHDRAWAL") return `WD ke ${username}`;
     if (kind === "REVERSAL_WITHDRAWAL") {
       const t = dep?.performed_at
         ? new Date(dep.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
         : "-";
-      return `Reversal WD dari ${username} (asli: ${t})`;
+      return `Reversal WD dari ${username} ${t}`;
     }
     // fallback gunakan description dari DB
     return r.description ?? "-";
