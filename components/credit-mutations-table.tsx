@@ -316,9 +316,9 @@ export default function CreditMutationsTable() {
                 <th className="text-left w-28">Cat</th>
                 <th className="text-left min-w-[320px]">Desc</th>
                 <th className="text-left w-28">Amount</th>
-                <th className="text-left w-28">Start</th>
-                <th className="text-left w-28">Finish</th>
-                <th className="text-left w-40">Creator</th>
+                <th className="text-left w-33">Start</th>
+                <th className="text-left w-33">Finish</th>
+                <th className="text-left w-30">Creator</th>
               </tr>
             </thead>
 
