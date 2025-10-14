@@ -162,9 +162,9 @@ export default function PendingDepositsTable() {
   const [assignTxnAt, setAssignTxnAt] = useState<string>(() => {
     const d = new Date();
     const pad = (n: number) => n.toString().padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-      d.getHours()
-    )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
+      d.getDate()
+    )}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   });
   const [assignLeadQuery, setAssignLeadQuery] = useState("");
   const [assignLeadOpts, setAssignLeadOpts] = useState<LeadLite[]>([]);
@@ -192,7 +192,7 @@ export default function PendingDepositsTable() {
   };
   const closeAssign = useCallback(() => setAssignOpen(false), []);
 
-  // search player (pola DP/WD)
+  // === Player search (identik dengan banks-table: exact ILIKE + navigasi keyboard) ===
   useEffect(() => {
     let active = true;
     (async () => {
@@ -205,15 +205,19 @@ export default function PendingDepositsTable() {
       const { data, error } = await supabase
         .from("leads")
         .select("id, username, name, bank, bank_name, bank_no")
-        .ilike("username", `%${q}%`)
+        .ilike("username", q.trim()) // TANPA wildcard—samakan dengan banks-table
         .limit(10);
       if (!active) return;
-      if (!error) setAssignLeadOpts((data as LeadLite[]) ?? []);
+      if (!error) {
+        setAssignLeadOpts((data as LeadLite[]) ?? []);
+        setAssignLeadIndex(0);
+      }
     })();
     return () => {
       active = false;
     };
-  }, [assignLeadQuery, assignLeadPicked, assignOpen, supabase]);
+  }, [assignLeadQuery, assignLeadPicked, assignOpen, supabase]); // ← sama pola dependensi
+  // (mengikuti pola DP/WD di banks-table untuk pengalaman yang konsisten). :contentReference[oaicite:1]{index=1}
 
   const submitAssign = async () => {
     if (!assignRow) return;
@@ -281,7 +285,6 @@ export default function PendingDepositsTable() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [assignOpen, delOpen, closeAssign, closeDelete]);
-  // (Deposits & Withdrawals juga memakai pattern ini untuk ESC close.) 
 
   // ======== Render helpers ========
   const headerTitle = useMemo(
@@ -484,7 +487,9 @@ export default function PendingDepositsTable() {
                     <td>
                       {new Date(assignRow.performed_at).toLocaleString(
                         "id-ID",
-                        { timeZone: "Asia/Jakarta" }
+                        {
+                          timeZone: "Asia/Jakarta",
+                        }
                       )}
                     </td>
                   </tr>
@@ -508,7 +513,7 @@ export default function PendingDepositsTable() {
                   <input
                     ref={playerInputRef}
                     className="border rounded px-3 py-2 w-full"
-                    placeholder="search"
+                    placeholder="search username"
                     value={
                       assignLeadPicked
                         ? assignLeadPicked.username ?? ""
