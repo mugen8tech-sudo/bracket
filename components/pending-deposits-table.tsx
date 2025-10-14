@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
@@ -162,9 +162,9 @@ export default function PendingDepositsTable() {
   const [assignTxnAt, setAssignTxnAt] = useState<string>(() => {
     const d = new Date();
     const pad = (n: number) => n.toString().padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
-      d.getDate()
-    )}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+      d.getHours()
+    )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   });
   const [assignLeadQuery, setAssignLeadQuery] = useState("");
   const [assignLeadOpts, setAssignLeadOpts] = useState<LeadLite[]>([]);
@@ -190,7 +190,7 @@ export default function PendingDepositsTable() {
       )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
     );
   };
-  const closeAssign = () => setAssignOpen(false);
+  const closeAssign = useCallback(() => setAssignOpen(false), []);
 
   // search player (pola DP/WD)
   useEffect(() => {
@@ -246,7 +246,7 @@ export default function PendingDepositsTable() {
     setDelNote("");
     setDelOpen(true);
   };
-  const closeDelete = () => setDelOpen(false);
+  const closeDelete = useCallback(() => setDelOpen(false), []);
 
   const submitDelete = async () => {
     if (!delRow) return;
@@ -265,6 +265,23 @@ export default function PendingDepositsTable() {
     setDelOpen(false);
     await Promise.all([loadHeaderCount(), load()]);
   };
+
+  /** ======== ESC close (disamakan dengan Deposits & Withdrawals) ======== */
+  useEffect(() => {
+    if (!assignOpen && !delOpen) return;
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (assignOpen) closeAssign();
+        if (delOpen) closeDelete();
+      }
+    };
+
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [assignOpen, delOpen, closeAssign, closeDelete]);
+  // (Deposits & Withdrawals juga memakai pattern ini untuk ESC close.) 
 
   // ======== Render helpers ========
   const headerTitle = useMemo(
@@ -439,7 +456,7 @@ export default function PendingDepositsTable() {
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
           onMouseDown={(e) => {
-            if (e.currentTarget === e.target) setAssignOpen(false);
+            if (e.currentTarget === e.target) closeAssign();
           }}
         >
           <form
@@ -467,9 +484,7 @@ export default function PendingDepositsTable() {
                     <td>
                       {new Date(assignRow.performed_at).toLocaleString(
                         "id-ID",
-                        {
-                          timeZone: "Asia/Jakarta",
-                        }
+                        { timeZone: "Asia/Jakarta" }
                       )}
                     </td>
                   </tr>
