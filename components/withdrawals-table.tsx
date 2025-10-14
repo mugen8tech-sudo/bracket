@@ -13,8 +13,8 @@ type WithdrawalRow = {
   username: string;
   amount_gross: number;
   transfer_fee_amount: number;
-  txn_at: string;          // waktu dipilih
-  performed_at: string;    // waktu klik
+  txn_at: string;          // waktu dipilih (backdate)
+  performed_at: string;    // waktu klik (real)
   status: "posted" | "reversed";
   created_by: string | null;
   lead?: { name: string | null } | null;
@@ -30,6 +30,7 @@ function endOfDayJakartaISO(d: string) {
   return new Date(`${d}T23:59:59.999+07:00`).toISOString();
 }
 function todayJakartaDateStr() {
+  // yyyy-mm-dd di zona Asia/Jakarta
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 }
 function nowLocalDatetimeValue() {
@@ -43,19 +44,49 @@ function nowLocalDatetimeValue() {
 export default function WithdrawalsTable() {
   const supabase = supabaseBrowser();
 
+  // ===== Header summary (hari ini, berdasarkan txn_at & status posted) =====
+  const [sumToday, setSumToday] = useState<number>(0);
+  const [countToday, setCountToday] = useState<number>(0);
+  const [playersToday, setPlayersToday] = useState<number>(0);
+
+  const loadToday = async () => {
+    const y = todayJakartaDateStr();
+    const s = startOfDayJakartaISO(y);
+    const e = endOfDayJakartaISO(y);
+
+    const { data, error } = await supabase
+      .from("withdrawals")
+      .select("amount_gross, username, status")
+      .gte("txn_at", s)
+      .lte("txn_at", e)
+      .eq("status", "posted");
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+    const list =
+      ((data ?? []) as { amount_gross: number; username: string }[]) || [];
+    setSumToday(list.reduce((a, b) => a + Number(b.amount_gross || 0), 0));
+    setCountToday(list.length);
+    setPlayersToday(new Set(list.map((x) => x.username)).size);
+  };
+
+  // ===== List & pagination =====
   const [rows, setRows] = useState<WithdrawalRow[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // filters
+  // ===== Filters (default: hari ini) =====
   const [fLead, setFLead] = useState("");
   const [fUser, setFUser] = useState("");
   const [fStart, setFStart] = useState<string>(todayJakartaDateStr());
   const [fFinish, setFFinish] = useState<string>(todayJakartaDateStr());
   const [fDeleted, setFDeleted] = useState<"ALL" | "YES" | "NO">("ALL");
 
+  // Base select
   const buildBaseSelect = () =>
     supabase
       .from("withdrawals")
@@ -74,7 +105,7 @@ export default function WithdrawalsTable() {
   const load = async (pageToLoad = page) => {
     setLoading(true);
 
-    // filter lead -> cari id lead dulu (seperti Deposits)
+    // Jika filter lead name diisi → cari ID lead dulu (selaras dengan Deposits)
     let leadIds: number[] | null = null;
     const leadName = fLead.trim();
     if (leadName) {
@@ -88,9 +119,15 @@ export default function WithdrawalsTable() {
         alert(eLead.message);
         return;
       }
-      leadIds = (leadList ?? []).map((x) => Number(x.id)).filter(Number.isFinite);
+      leadIds = (leadList ?? [])
+        .map((x) => Number(x.id))
+        .filter(Number.isFinite);
       if (leadIds.length === 0) {
-        setRows([]); setTotal(0); setPage(1); setLoading(false); return;
+        setRows([]);
+        setTotal(0);
+        setPage(1);
+        setLoading(false);
+        return;
       }
     }
 
@@ -98,6 +135,7 @@ export default function WithdrawalsTable() {
     const to = from + PAGE_SIZE - 1;
 
     let q = buildBaseSelect();
+
     if (leadIds) q = q.in("lead_id", leadIds);
     if (fUser.trim()) q = q.ilike("username", `%${fUser.trim()}%`);
     if (fStart) q = q.gte("txn_at", startOfDayJakartaISO(fStart));
@@ -106,11 +144,17 @@ export default function WithdrawalsTable() {
     if (fDeleted === "NO") q = q.eq("status", "posted");
 
     const { data, error, count } = await q.range(from, to);
-    if (error) { setLoading(false); alert(error.message); return; }
+    if (error) {
+      setLoading(false);
+      alert(error.message);
+      return;
+    }
 
-    // map created_by -> full_name
+    // ---- map created_by -> full_name (agar kolom By tidak UUID) ----
     const raw = ((data as any[]) ?? []) as WithdrawalRow[];
-    const ids = Array.from(new Set(raw.map((r) => r.created_by).filter(Boolean) as string[]));
+    const ids = Array.from(
+      new Set(raw.map((r) => r.created_by).filter(Boolean) as string[])
+    );
     let nameMap = new Map<string, string>();
     if (ids.length > 0) {
       const { data: profs } = await supabase
@@ -130,20 +174,40 @@ export default function WithdrawalsTable() {
     setLoading(false);
   };
 
-  useEffect(() => { load(1); }, []); // eslint-disable-line
+  // Load awal: summary + data (selaras dengan Deposits)
+  useEffect(() => {
+    loadToday();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    load(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Terapkan filter hanya saat Submit/Enter (bukan live)
+  const applyFilters = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    load(1);
+  };
 
   // ===== Reverse (Delete) modal =====
   const [delOpen, setDelOpen] = useState(false);
   const [delNote, setDelNote] = useState("");
   const [delRow, setDelRow] = useState<WithdrawalRow | null>(null);
-  const [delBank, setDelBank] = useState<{ bank_code: string; account_name: string; account_no: string } | null>(null);
+  const [delBank, setDelBank] = useState<{
+    bank_code: string;
+    account_name: string;
+    account_no: string;
+  } | null>(null);
+
+  // waktu reversal dipilih → dikunci (auto saat modal dibuka)
   const [delTxnAt, setDelTxnAt] = useState<string>(nowLocalDatetimeValue());
 
   const openDelete = async (r: WithdrawalRow) => {
     setDelRow(r);
     setDelNote("");
     setDelOpen(true);
-    setDelTxnAt(nowLocalDatetimeValue());
+    setDelTxnAt(nowLocalDatetimeValue()); // default saat modal dibuka
     setDelBank(null);
     const { data: b } = await supabase
       .from("banks")
@@ -154,17 +218,36 @@ export default function WithdrawalsTable() {
   };
   const closeDelete = useCallback(() => setDelOpen(false), []);
 
+  // ESC close (selaras dengan Deposits)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && delOpen) {
+        e.preventDefault();
+        closeDelete();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [delOpen, closeDelete]);
+
   const submitDelete = async () => {
     if (!delRow) return;
-    if (!delNote.trim()) { alert("Keterangan Penghapusan wajib diisi"); return; }
+    if (!delNote.trim()) {
+      alert("Keterangan Penghapusan wajib diisi");
+      return;
+    }
     const { error } = await supabase.rpc("reverse_withdrawal", {
       p_withdrawal_id: delRow.id,
-      p_txn_at_final: new Date(delTxnAt).toISOString(),
+      p_txn_at_final: new Date(delTxnAt).toISOString(), // waktu reversal (dikunci)
       p_reason: delNote.trim(),
     });
-    if (error) { alert(error.message); return; }
+    if (error) {
+      alert(error.message);
+      return;
+    }
     setDelOpen(false);
     await load(page);
+    await loadToday(); // refresh header summary
   };
 
   const canPrev = page > 1;
@@ -172,43 +255,76 @@ export default function WithdrawalsTable() {
 
   return (
     <div className="space-y-3">
+      {/* Header summary hari ini */}
       <div className="rounded border bg-white p-3 text-sm">
-        <b>Withdrawals</b>
+        <b>Withdrawals</b> | {formatAmount(sumToday)} | {countToday} transaction
+        {" | "}
+        {playersToday} player
       </div>
 
       <div className="overflow-auto rounded border bg-white">
-        <table className="table-grid min-w-[1100px]" style={{ borderCollapse: "collapse" }}>
+        <table
+          className="table-grid min-w-[1100px]"
+          style={{ borderCollapse: "collapse" }}
+        >
           <thead>
             {/* Row filters */}
             <tr className="filters">
-              <th></th>
+              <th className="w-24"></th>
               <th>
-                <input placeholder="Lead name" value={fLead}
+                <input
+                  placeholder="Lead name"
+                  value={fLead}
                   onChange={(e) => setFLead(e.target.value)}
-                  className="w-full border rounded px-2 py-1" />
+                  onKeyDown={(e) => e.key === "Enter" && applyFilters()}
+                  className="w-full border rounded px-2 py-1"
+                />
               </th>
               <th>
-                <input placeholder="Username" value={fUser}
+                <input
+                  placeholder="Username"
+                  value={fUser}
                   onChange={(e) => setFUser(e.target.value)}
-                  className="w-full border rounded px-2 py-1" />
+                  onKeyDown={(e) => e.key === "Enter" && applyFilters()}
+                  className="w-full border rounded px-2 py-1"
+                />
               </th>
               <th></th>
               <th>
                 <div className="flex flex-col gap-1">
-                  <input type="date" value={fStart} onChange={(e) => setFStart(e.target.value)} className="border rounded px-2 py-1" />
-                  <input type="date" value={fFinish} onChange={(e) => setFFinish(e.target.value)} className="border rounded px-2 py-1" />
+                  <input
+                    type="date"
+                    value={fStart}
+                    onChange={(e) => setFStart(e.target.value)}
+                    className="border rounded px-2 py-1"
+                  />
+                  <input
+                    type="date"
+                    value={fFinish}
+                    onChange={(e) => setFFinish(e.target.value)}
+                    className="border rounded px-2 py-1"
+                  />
                 </div>
               </th>
               <th></th>
               <th>
-                <select value={fDeleted} onChange={(e) => setFDeleted(e.target.value as any)} className="border rounded px-2 py-1">
+                <select
+                  value={fDeleted}
+                  onChange={(e) => setFDeleted(e.target.value as any)}
+                  className="border rounded px-2 py-1"
+                >
                   <option value="ALL">ALL</option>
                   <option value="YES">YES</option>
                   <option value="NO">NO</option>
                 </select>
               </th>
               <th className="whitespace-nowrap">
-                <button onClick={() => load(1)} className="rounded bg-blue-600 text-white px-3 py-1">Submit</button>
+                <button
+                  onClick={applyFilters}
+                  className="rounded bg-blue-600 text-white px-3 py-1"
+                >
+                  Submit
+                </button>
               </th>
             </tr>
 
@@ -225,23 +341,43 @@ export default function WithdrawalsTable() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8}>Loading…</td></tr>
+              <tr>
+                <td colSpan={8}>Loading…</td>
+              </tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={8}>No data</td></tr>
+              <tr>
+                <td colSpan={8}>No data</td>
+              </tr>
             ) : (
               rows.map((r) => (
                 <tr key={r.id}>
                   <td>{r.id}</td>
-                  <td className="whitespace-normal break-words">{r.lead?.name ?? "-"}</td>
+                  <td className="whitespace-normal break-words">
+                    {r.lead?.name ?? "-"}
+                  </td>
                   <td>{r.username}</td>
                   <td className="text-left">{formatAmount(r.amount_gross)}</td>
-                  <td>{new Date(r.txn_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
+                  <td>
+                    {new Date(r.txn_at).toLocaleString("id-ID", {
+                      timeZone: "Asia/Jakarta",
+                    })}
+                  </td>
                   <td>{r.created_by_name ?? r.created_by ?? "-"}</td>
                   <td>{r.status === "reversed" ? "YES" : "NO"}</td>
                   <td className="space-x-2">
-                    <Link href={`/withdrawals/${r.id}`} className="rounded bg-gray-100 px-3 py-1">Detail</Link>
+                    <Link
+                      href={`/withdrawals/${r.id}`}
+                      className="rounded bg-gray-100 px-3 py-1"
+                    >
+                      Detail
+                    </Link>
                     {r.status !== "reversed" && (
-                      <button onClick={() => openDelete(r)} className="rounded bg-red-600 text-white px-3 py-1">Delete</button>
+                      <button
+                        onClick={() => openDelete(r)}
+                        className="rounded bg-red-600 text-white px-3 py-1"
+                      >
+                        Delete
+                      </button>
                     )}
                   </td>
                 </tr>
@@ -251,56 +387,149 @@ export default function WithdrawalsTable() {
         </table>
       </div>
 
-      {/* pagination */}
+      {/* pagination 50/halaman */}
       <div className="flex justify-center">
         <nav className="inline-flex items-center gap-1 text-sm select-none">
-          <button onClick={() => canPrev && load(1)} disabled={!canPrev} className="px-3 py-1 rounded border bg-white disabled:opacity-50">First</button>
-          <button onClick={() => canPrev && load(page - 1)} disabled={!canPrev} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Previous</button>
-          <span className="px-3 py-1 rounded border bg-white">Page {page} / {totalPages}</span>
-          <button onClick={() => canNext && load(page + 1)} disabled={!canNext} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Next</button>
-          <button onClick={() => canNext && load(totalPages)} disabled={!canNext} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Last</button>
+          <button
+            onClick={() => {
+              if (page <= 1) return;
+              setPage(1);
+              load(1);
+            }}
+            disabled={page <= 1}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            First
+          </button>
+          <button
+            onClick={() => {
+              if (page <= 1) return;
+              load(page - 1);
+            }}
+            disabled={page <= 1}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="px-3 py-1 rounded border bg-white">
+            Page {page} / {totalPages}
+          </span>
+          <button
+            onClick={() => {
+              if (page >= totalPages) return;
+              load(page + 1);
+            }}
+            disabled={page >= totalPages}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Next
+          </button>
+          <button
+            onClick={() => {
+              if (page >= totalPages) return;
+              load(totalPages);
+            }}
+            disabled={page >= totalPages}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Last
+          </button>
         </nav>
       </div>
 
       {/* Delete (Reverse) modal */}
       {delOpen && delRow && (
-        <div className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
-             onMouseDown={(e) => { if (e.currentTarget === e.target) closeDelete(); }}>
-          <form onSubmit={(e) => { e.preventDefault(); submitDelete(); }}
-                className="bg-white rounded border w-full max-w-2xl mt-10">
-            <div className="p-4 border-b font-semibold">Konfirmasi reverse withdrawal?</div>
+        <div
+          className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
+          onMouseDown={(e) => {
+            if (e.currentTarget === e.target) closeDelete();
+          }}
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitDelete();
+            }}
+            className="bg-white rounded border w-full max-w-2xl mt-10"
+          >
+            <div className="p-4 border-b font-semibold">
+              Konfirmasi reverse withdrawal?
+            </div>
             <div className="p-4">
               <table className="table-grid w-full">
                 <tbody>
                   <tr>
                     <td className="w-40">Bank</td>
-                    <td>{delBank ? `[${delBank.bank_code}] ${delBank.account_name} - ${delBank.account_no}` : "Loading..."}</td>
+                    <td>
+                      {delBank
+                        ? `[${delBank.bank_code}] ${delBank.account_name} - ${delBank.account_no}`
+                        : "Loading..."}
+                    </td>
                   </tr>
-                  <tr><td>Player</td><td>{delRow.username}</td></tr>
-                  <tr><td>Jumlah (GROSS)</td><td>{formatAmount(delRow.amount_gross)}</td></tr>
-                  <tr><td>Transfer Fee</td><td>{formatAmount(delRow.transfer_fee_amount)}</td></tr>
+                  <tr>
+                    <td>Player</td>
+                    <td>{delRow.username}</td>
+                  </tr>
+                  <tr>
+                    <td>Jumlah (GROSS)</td>
+                    <td>{formatAmount(delRow.amount_gross)}</td>
+                  </tr>
+                  <tr>
+                    <td>Transfer Fee</td>
+                    <td>{formatAmount(delRow.transfer_fee_amount)}</td>
+                  </tr>
                   <tr>
                     <td>Tgl Transaksi (dipilih)</td>
-                    <td>{new Date(delRow.txn_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
+                    <td>
+                      {new Date(delRow.txn_at).toLocaleString("id-ID", {
+                        timeZone: "Asia/Jakarta",
+                      })}
+                    </td>
                   </tr>
                   <tr>
                     <td>Tgl Transaksi (Real)</td>
-                    <td>{new Date(delRow.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
+                    <td>
+                      {new Date(delRow.performed_at).toLocaleString("id-ID", {
+                        timeZone: "Asia/Jakarta",
+                      })}
+                    </td>
                   </tr>
                   <tr>
                     <td>Tgl Reversal (dipilih)</td>
-                    <td>{new Date(delTxnAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
+                    <td>
+                      {/* dikunci: tampil saja, tidak bisa diubah */}
+                      {new Date(delTxnAt).toLocaleString("id-ID", {
+                        timeZone: "Asia/Jakarta",
+                      })}
+                    </td>
                   </tr>
                 </tbody>
               </table>
               <div className="mt-3">
-                <label className="block text-xs mb-1">Keterangan Penghapusan</label>
-                <input className="border rounded px-3 py-2 w-full" value={delNote} onChange={(e) => setDelNote(e.target.value)} />
+                <label className="block text-xs mb-1">
+                  Keterangan Penghapusan
+                </label>
+                <input
+                  className="border rounded px-3 py-2 w-full"
+                  value={delNote}
+                  onChange={(e) => setDelNote(e.target.value)}
+                />
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
-              <button type="button" onClick={closeDelete} className="rounded px-4 py-2 bg-gray-100">Close</button>
-              <button type="submit" className="rounded px-4 py-2 bg-red-600 text-white">Submit</button>
+              <button
+                type="button"
+                onClick={closeDelete}
+                className="rounded px-4 py-2 bg-gray-100"
+              >
+                Close
+              </button>
+              <button
+                type="submit"
+                className="rounded px-4 py-2 bg-red-600 text-white"
+              >
+                Submit
+              </button>
             </div>
           </form>
         </div>
