@@ -140,8 +140,9 @@ export default function BankMutationsTable() {
     let q = supabase
       .from("bank_mutations")
       .select("*", { count: "exact" })
-      .order("performed_at", { ascending: false })
-      .order("id", { ascending: false }); // tie‑breaker stabil
+      .order("id", { ascending: false }) // tie‑breaker stabil
+      .order("performed_at", { ascending: false });
+      
 
     // Filter Waktu Click (REAL)
     if (fStart) q = q.gte("performed_at", startOfDayJakartaISO(fStart));
