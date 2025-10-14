@@ -140,6 +140,7 @@ export default function BankMutationsTable() {
     let q = supabase
       .from("bank_mutations")
       .select("*", { count: "exact" })
+      .order("performed_at", { ascending: false })
       .order("id", { ascending: false }); // tie‑breaker stabil
       
 
