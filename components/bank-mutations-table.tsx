@@ -448,16 +448,15 @@ export default function BankMutationsTable() {
               </th>
 
               {/* Amount / Start / Finish: no filters */}
-              <th className="w-24"></th>
-              <th className="w-24"></th>
-              <th className="w-24"></th>
-
               {/* Submit */}
               <th className="w-28">
                 <button onClick={() => load(1)} className="rounded bg-blue-600 text-white px-3 py-1">
                   submit
                 </button>
               </th>
+              <th className="w-24"></th>
+              <th className="w-24"></th>
+              <th className="w-24"></th>
             </tr>
 
             {/* ===== HEADER ===== */}
