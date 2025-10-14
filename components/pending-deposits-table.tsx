@@ -369,7 +369,7 @@ export default function PendingDepositsTable() {
               <tr>
                 <th className="text-left">ID</th>
                 <th className="text-left">Bank</th>
-                <th className="text-right">Amount</th>
+                <th className="text-left">Amount</th>
                 <th className="text-left">Tgl</th>
                 <th className="text-left">Status</th>
                 <th className="text-left">Action</th>
@@ -426,7 +426,7 @@ export default function PendingDepositsTable() {
                           {r.description && r.description.trim() !== "" ? r.description : "-"}
                         </div>
                       </td>
-                      <td className="text-right">{formatAmount(r.amount_gross)}</td>
+                      <td className="text-left">{formatAmount(r.amount_gross)}</td>
                       <td>
                         {/* gaya tampilan dd/mm/yy HH.mm (tetap) */}
                         {new Date(r.txn_at)
