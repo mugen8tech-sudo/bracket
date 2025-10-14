@@ -141,7 +141,7 @@ export default function BankMutationsTable() {
       .from("bank_mutations")
       .select("*", { count: "exact" })
       .order("performed_at", { ascending: false })
-      .order("id", { ascending: true }); // tie‑breaker stabil
+      .order("id", { ascending: false }); // tie‑breaker stabil
 
     // Filter Waktu Click (REAL)
     if (fStart) q = q.gte("performed_at", startOfDayJakartaISO(fStart));
