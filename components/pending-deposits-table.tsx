@@ -374,7 +374,7 @@ export default function PendingDepositsTable() {
               <tr>
                 <th className="text-left">ID</th>
                 <th className="text-left">Bank</th>
-                <th className="text-right">Amount</th>
+                <th className="text-left">Amount</th>
                 <th className="text-left">Tgl</th>
                 <th className="text-left">Status</th>
                 <th className="text-left">Action</th>
