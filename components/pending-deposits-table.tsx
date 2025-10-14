@@ -344,7 +344,7 @@ export default function PendingDepositsTable() {
                 <th className="text-left min-w-[340px]">Bank</th>
                 <th className="text-left w-28">Amount</th>
                 <th className="text-left w-52">Tgl</th>
-                <th className="text-left w-56">Status</th>
+                <th className="text-left max-w-[160px]">Status</th>
                 <th className="text-left w-28">Action</th>
               </tr>
             </thead>
