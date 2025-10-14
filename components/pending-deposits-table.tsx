@@ -302,7 +302,7 @@ export default function PendingDepositsTable() {
                 <th className="w-20" />
                 <th className="w-[340px]" />
                 <th className="w-32" />
-                <th className="w-52">
+                <th className="w-40">
                   <div className="flex flex-col gap-1">
                     <input
                       type="date"
@@ -331,7 +331,7 @@ export default function PendingDepositsTable() {
                     <option value="NOT_ASSIGNED">NOT ASSIGNED</option>
                   </select>
                 </th>
-                <th className="w-28">
+                <th className="w-38">
                   <button type="submit" className="rounded bg-blue-600 text-white px-3 py-1">
                     submit
                   </button>
@@ -343,9 +343,9 @@ export default function PendingDepositsTable() {
                 <th className="text-left w-20">ID</th>
                 <th className="text-left min-w-[340px]">Bank</th>
                 <th className="text-left w-28">Amount</th>
-                <th className="text-left w-52">Tgl</th>
+                <th className="text-left w-40">Tgl</th>
                 <th className="text-left max-w-[160px]">Status</th>
-                <th className="text-left w-28">Action</th>
+                <th className="text-left w-38">Action</th>
               </tr>
             </thead>
 
