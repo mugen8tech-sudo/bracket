@@ -318,13 +318,13 @@ export default function PendingDepositsTable() {
                     />
                   </div>
                 </th>
-                <th className="w-56">
+                <th className="w-40">
                   <select
                     value={fStatus}
                     onChange={(e) =>
                       setFStatus(e.target.value as "ALL" | "NOT_ASSIGNED" | "ASSIGNED")
                     }
-                    className="border rounded px-2 py-1 w-full"
+                    className="border rounded px-2 py-1 w-full max-w-[160px]"
                   >
                     <option value="ALL">ALL</option>
                     <option value="ASSIGNED">ASSIGNED</option>
@@ -363,11 +363,11 @@ export default function PendingDepositsTable() {
                   <tr key={r.id} className="align-top">
                     <td>{r.id}</td>
                     <td className="whitespace-normal break-words">
-                      <div className="font-semibold">{bankLabel(r)}</div>
-                      {/* baris kedua: deskripsi (meniru screenshot) */}
-                      {r.description && (
-                        <div className="text-sm mt-1">{r.description}</div>
-                      )}
+                      <div className="font-semibold">{bankLabel(r.bank_id)}</div>
+                      <div className="my-1 h-px bg-gray-200" />
+                      <div className="text-sm text-gray-700">
+                        {r.description ?? "-"}
+                      </div>
                     </td>
                     <td className="text-left">{formatAmount(r.amount_gross)}</td>
                     <td>
@@ -388,7 +388,7 @@ export default function PendingDepositsTable() {
                           </button>
                           <button
                             onClick={() => openDelete(r)}
-                            className="rounded bg-blue-600 text-white px-3 py-1"
+                            className="rounded bg-red-600 text-white px-3 py-1"
                             type="button"
                           >
                             Delete
