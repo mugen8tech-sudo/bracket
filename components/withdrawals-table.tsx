@@ -119,7 +119,7 @@ export default function WithdrawalsTable() {
       const { data: leadList, error: eLead } = await supabase
         .from("leads")
         .select("id")
-        .ilike("name", `%${leadName}%`)
+        .ilike("name", leadName)
         .limit(1000);
       if (eLead) {
         setLoading(false);
@@ -144,7 +144,8 @@ export default function WithdrawalsTable() {
     let q = buildBaseSelect();
 
     if (leadIds) q = q.in("lead_id", leadIds);
-    if (fUser.trim()) q = q.ilike("username", `%${fUser.trim()}%`);
+    const user = fUser.trim();
+    if (user) q = q.ilike("username", user); // exact (case-insensitive)
     if (fStart) q = q.gte("txn_at", startOfDayJakartaISO(fStart));
     if (fFinish) q = q.lte("txn_at", endOfDayJakartaISO(fFinish));
     if (fDeleted === "YES") q = q.eq("status", "reversed");
