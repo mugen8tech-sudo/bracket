@@ -454,9 +454,9 @@ export default function BankMutationsTable() {
                   submit
                 </button>
               </th>
-              <th className="w-24"></th>
-              <th className="w-24"></th>
-              <th className="w-24"></th>
+              <th className="w-26"></th>
+              <th className="w-26"></th>
+              <th className="w-20"></th>
             </tr>
 
             {/* ===== HEADER ===== */}
