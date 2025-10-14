@@ -16,24 +16,22 @@ function startOfDayJakartaISO(ymd: string) {
 function endOfDayJakartaISO(ymd: string) {
   return new Date(`${ymd}T23:59:59.999+07:00`).toISOString();
 }
-function formatTglJakartaShort(iso?: string | null) {
+function nowLocalDatetimeValue() {
+  const d = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+/** Format "YYYY-MM-DD HH:mm:ss +0700" (WIB, no DST) */
+function formatWIBWithOffset(iso?: string | null) {
   if (!iso) return "-";
   const d = new Date(iso);
-  const tgl = d.toLocaleDateString("id-ID", {
+  const core = d.toLocaleString("sv-SE", {
     timeZone: "Asia/Jakarta",
-    day: "2-digit",
-    month: "2-digit",
-    year: "2-digit",
-  });
-  const jam = d
-    .toLocaleTimeString("id-ID", {
-      timeZone: "Asia/Jakarta",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })
-    .replace(":", ".");
-  return `${tgl} ${jam}`;
+    hour12: false,
+  }); // "YYYY-MM-DD HH:mm:ss"
+  return `${core} +0700`;
 }
 
 /* ========= Types ========= */
@@ -46,7 +44,7 @@ type PendingDeposit = {
   amount_net: number;
   opened_at: string | null;
 
-  txn_at: string; // waktu dipilih saat BUAT PDP -> dipakai sebagai "Tgl"
+  txn_at: string; // waktu dipilih saat BUAT PDP
   performed_at: string; // waktu real SAAT PDP dibuat
   description: string | null;
 
@@ -101,7 +99,7 @@ export default function PendingDepositsTable() {
   const [total, setTotal] = useState(0);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // filters (sesuai screenshot)
+  // filters (versi simpel sesuai checkpoint)
   const [fStart, setFStart] = useState(todayJakartaYmd());
   const [fFinish, setFFinish] = useState(todayJakartaYmd());
   const [fStatus, setFStatus] = useState<StatusFilter>("NOT_ASSIGNED");
@@ -177,55 +175,64 @@ export default function PendingDepositsTable() {
   };
 
   // ===== util label bank sesuai tampilan screenshot =====
-  const bankParts = (id: number) => {
+  const bankLabel = (id: number) => {
     const b = banks.find((x) => x.id === id);
-    if (!b)
-      return {
-        line1: "[]",
-        no: "-",
-      };
-    return {
-      line1: `[${b.bank_code}] ${b.account_name}`,
-      no: b.account_no,
-    };
+    if (!b) return "[]";
+    return `[${b.bank_code}] ${b.account_name} - ${b.account_no}`;
   };
 
   /* ====== Assign modal state ====== */
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignRow, setAssignRow] = useState<PendingDeposit | null>(null);
-  const [assignTxnAt, setAssignTxnAt] = useState<string>(() => {
-    const d = new Date();
-    const pad = (n: number) => n.toString().padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-      d.getHours()
-    )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  });
-  const [assignDesc, setAssignDesc] = useState<string>("");
+  const [assignTxnAt, setAssignTxnAt] = useState<string>(nowLocalDatetimeValue());
+  const [assignDesc] = useState<string>(""); // deskripsi dihilangkan dari UI, tetap kirim null
 
-  // player search
+  // player search (EXACT match)
   const [leadQuery, setLeadQuery] = useState<string>("");
   const [leadOptions, setLeadOptions] = useState<LeadLite[]>([]);
   const [leadPicked, setLeadPicked] = useState<LeadLite | null>(null);
   const [leadIndex, setLeadIndex] = useState<number>(0);
   const playerInputRef = useRef<HTMLInputElement | null>(null);
 
+  // ESC close untuk Assign & Delete
+  const [delOpen, setDelOpen] = useState(false);
+  const [delRow, setDelRow] = useState<PendingDeposit | null>(null);
+  const [delNote, setDelNote] = useState("");
+
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (assignOpen) setAssignOpen(false);
+        if (delOpen) setDelOpen(false);
+      }
+    };
+    if (assignOpen || delOpen) window.addEventListener("keydown", onEsc);
+    return () => window.removeEventListener("keydown", onEsc);
+  }, [assignOpen, delOpen]);
+
   useEffect(() => {
     let active = true;
     (async () => {
       if (!assignOpen) return;
-      const q = leadQuery.trim();
+      const qRaw = leadQuery;
+      const q = qRaw.trim();
       if (!q) {
         setLeadOptions([]);
         return;
       }
+      // Exact, case-insensitive: ILIKE tanpa wildcard
       const { data, error } = await supabase
         .from("leads")
         .select("id, username, name, bank, bank_name, bank_no")
-        .ilike("username", `%${q}%`)
+        .ilike("username", q)
         .limit(10);
       if (!active) return;
       if (error) return;
-      setLeadOptions((data as LeadLite[]) ?? []);
+      // Filter lagi di FE untuk pastikan benar-benar exact (tanpa spasi)
+      const exact = ((data as LeadLite[]) ?? []).filter(
+        (opt) => (opt.username ?? "").trim().toLowerCase() === q.toLowerCase()
+      );
+      setLeadOptions(exact);
       setLeadIndex(0);
     })();
     return () => {
@@ -236,14 +243,7 @@ export default function PendingDepositsTable() {
   const openAssign = (r: PendingDeposit) => {
     setAssignRow(r);
     setAssignOpen(true);
-    const d = new Date();
-    const pad = (n: number) => n.toString().padStart(2, "0");
-    setAssignTxnAt(
-      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-        d.getHours()
-      )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-    );
-    setAssignDesc("");
+    setAssignTxnAt(nowLocalDatetimeValue());
     setLeadPicked(null);
     setLeadOptions([]);
     setLeadIndex(0);
@@ -274,11 +274,7 @@ export default function PendingDepositsTable() {
     await load(page);
   };
 
-  /* ====== Delete modal state ====== */
-  const [delOpen, setDelOpen] = useState(false);
-  const [delRow, setDelRow] = useState<PendingDeposit | null>(null);
-  const [delNote, setDelNote] = useState("");
-
+  /* ====== Delete helpers ====== */
   const openDelete = (r: PendingDeposit) => {
     setDelRow(r);
     setDelNote("");
@@ -289,7 +285,7 @@ export default function PendingDepositsTable() {
     if (!delRow) return;
     const { error } = await supabase.rpc("delete_pending_deposit", {
       p_pending_id: delRow.id,
-      p_txn_at_final: new Date().toISOString(), // tanpa input tanggal (sesuai screenshot)
+      p_txn_at_final: new Date().toISOString(),
       p_reason: delNote || null,
     });
     if (error) {
@@ -313,18 +309,17 @@ export default function PendingDepositsTable() {
 
       <div className="overflow-auto rounded border bg-white">
         <form onSubmit={applyFilters}>
-          {/* Gunakan table fixed + colgroup agar proporsional */}
+          {/* table fixed + colgroup agar proporsional */}
           <table
             className="table-grid table-fixed w-full min-w-[1000px]"
             style={{ borderCollapse: "collapse" }}
           >
-            {/* PROPORSI KOLOM: ID 7% | Bank 43% | Amount 12% | Tgl 16% | Status 10% | Action 12% */}
             <colgroup>
               <col style={{ width: "7%" }} />
-              <col style={{ width: "36%" }} />
-              <col style={{ width: "18%" }} />
+              <col style={{ width: "43%" }} />
               <col style={{ width: "12%" }} />
-              <col style={{ width: "15%" }} />
+              <col style={{ width: "16%" }} />
+              <col style={{ width: "10%" }} />
               <col style={{ width: "12%" }} />
             </colgroup>
 
@@ -374,7 +369,7 @@ export default function PendingDepositsTable() {
               <tr>
                 <th className="text-left">ID</th>
                 <th className="text-left">Bank</th>
-                <th className="text-left">Amount</th>
+                <th className="text-right">Amount</th>
                 <th className="text-left">Tgl</th>
                 <th className="text-left">Status</th>
                 <th className="text-left">Action</th>
@@ -392,12 +387,10 @@ export default function PendingDepositsTable() {
                 </tr>
               ) : (
                 rows.map((r) => {
-                  const b = bankParts(r.bank_id);
-
-                  const statusLabel = r.deleted_at
+                  const statusLabel = r.assigned_deposit_id
+                    ? `Player: ${r.assigned_username ?? "-"}`
+                    : r.deleted_at
                     ? "DELETED"
-                    : r.assigned_deposit_id
-                    ? "ASSIGNED"
                     : "PENDING ASSIGNMENT";
 
                   const actionEl =
@@ -428,15 +421,28 @@ export default function PendingDepositsTable() {
                     <tr key={r.id} className="align-top">
                       <td>{r.id}</td>
                       <td className="whitespace-normal break-words">
-                        <div className="font-semibold">{b.line1}</div>
-                        <div className="text-xs">{b.no}</div>
+                        <div className="font-semibold">{bankLabel(r.bank_id)}</div>
                         <div className="text-xs text-gray-600">
                           {r.description && r.description.trim() !== "" ? r.description : "-"}
                         </div>
                       </td>
-                      <td className="text-left">{formatAmount(r.amount_gross)}</td>
-                      <td>{formatTglJakartaShort(r.txn_at)}</td>
-                      <td className="whitespace-normal break-words">{statusLabel}</td>
+                      <td className="text-right">{formatAmount(r.amount_gross)}</td>
+                      <td>
+                        {/* gaya tampilan dd/mm/yy HH.mm (tetap) */}
+                        {new Date(r.txn_at)
+                          .toLocaleString("id-ID", {
+                            timeZone: "Asia/Jakarta",
+                            day: "2-digit",
+                            month: "2-digit",
+                            year: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: false,
+                          })
+                          .replace(",", "")
+                          .replace(":", ".")}
+                      </td>
+                      <td>{statusLabel}</td>
                       <td>{actionEl}</td>
                     </tr>
                   );
@@ -482,12 +488,12 @@ export default function PendingDepositsTable() {
         </nav>
       </div>
 
-      {/* ====== MODAL ASSIGN ====== */}
+      {/* ====== MODAL ASSIGN (UI seperti contoh) ====== */}
       {assignOpen && assignRow && (
         <div
-          className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
+          className="fixed inset-0 bg-black/60 flex items-start justify-center p-4"
           onMouseDown={(e) => {
-            if (e.currentTarget === e.target) setAssignOpen(false);
+            if (e.currentTarget === e.target) setAssignOpen(false); // klik overlay
           }}
         >
           <form
@@ -495,33 +501,49 @@ export default function PendingDepositsTable() {
               e.preventDefault();
               submitAssign();
             }}
-            className="bg-white rounded border w-full max-w-2xl mt-10"
+            className="bg-white rounded border w-full max-w-lg mt-14"
           >
             <div className="p-4 border-b font-semibold">
-              Deposit to [{bankParts(assignRow.bank_id).line1}]
+              Deposit to {bankLabel(assignRow.bank_id)}
             </div>
+
             <div className="p-4 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <div className="text-xs text-gray-500">Amount</div>
-                  <div className="font-semibold">{formatAmount(assignRow.amount_gross)}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-gray-500">Tgl Transaksi (PDP dibuat)</div>
-                  <div className="font-semibold">
-                    {formatTglJakartaShort(assignRow.performed_at)}
-                  </div>
+              {/* Amount (read only look) */}
+              <div>
+                <div className="text-xs mb-1">Amount</div>
+                <div className="border rounded px-3 py-2 bg-gray-50">
+                  {formatAmount(assignRow.amount_gross)}
                 </div>
               </div>
 
-              {/* Player */}
+              {/* Tgl Transaksi PDP dibuat (read only) */}
+              <div>
+                <div className="text-xs mb-1">Tgl Transaksi</div>
+                <div className="border rounded px-3 py-2 bg-gray-50">
+                  {formatWIBWithOffset(assignRow.performed_at)}
+                </div>
+              </div>
+
+              {/* Transaction Date (dipilih) */}
+              <div>
+                <label className="block text-xs mb-1">Transaction Date</label>
+                <input
+                  type="datetime-local"
+                  step="1"
+                  className="border rounded px-3 py-2 w-full"
+                  value={assignTxnAt}
+                  onChange={(e) => setAssignTxnAt(e.target.value)}
+                />
+              </div>
+
+              {/* Player: exact match only */}
               <div>
                 <label className="block text-xs mb-1">Player</label>
                 <div className="relative">
                   <input
                     ref={playerInputRef}
                     className="border rounded px-3 py-2 w-full"
-                    placeholder="search username"
+                    placeholder="search"
                     value={leadPicked ? (leadPicked.username ?? "") : leadQuery}
                     onChange={(e) => {
                       setLeadPicked(null);
@@ -551,6 +573,7 @@ export default function PendingDepositsTable() {
                       }
                     }}
                   />
+                  {/* dropdown suggestions (exact only) */}
                   {!leadPicked && leadOptions.length > 0 && (
                     <div className="absolute z-10 mt-1 max-h-56 overflow-auto w-full border bg-white rounded shadow">
                       {leadOptions.map((opt, idx) => (
@@ -571,29 +594,8 @@ export default function PendingDepositsTable() {
                   )}
                 </div>
               </div>
-
-              {/* Waktu dipilih saat ASSIGN */}
-              <div>
-                <label className="block text-xs mb-1">Transaction Date (dipilih)</label>
-                <input
-                  type="datetime-local"
-                  step="1"
-                  className="border rounded px-3 py-2 w-full"
-                  value={assignTxnAt}
-                  onChange={(e) => setAssignTxnAt(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs mb-1">Description</label>
-                <textarea
-                  rows={3}
-                  className="border rounded px-3 py-2 w-full"
-                  value={assignDesc}
-                  onChange={(e) => setAssignDesc(e.target.value)}
-                />
-              </div>
             </div>
+
             <div className="border-t p-4 flex justify-end gap-2">
               <button
                 type="button"
@@ -610,12 +612,12 @@ export default function PendingDepositsTable() {
         </div>
       )}
 
-      {/* ====== MODAL DELETE ====== */}
+      {/* ====== MODAL DELETE (ESC juga) ====== */}
       {delOpen && delRow && (
         <div
-          className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
+          className="fixed inset-0 bg-black/60 flex items-start justify-center p-4"
           onMouseDown={(e) => {
-            if (e.currentTarget === e.target) setDelOpen(false);
+            if (e.currentTarget === e.target) setDelOpen(false); // klik overlay
           }}
         >
           <form
@@ -623,29 +625,27 @@ export default function PendingDepositsTable() {
               e.preventDefault();
               submitDelete();
             }}
-            className="bg-white rounded border w-full max-w-2xl mt-10"
+            className="bg-white rounded border w-full max-w-lg mt-14"
           >
             <div className="p-4 border-b font-semibold">Konfirmasi delete deposit?</div>
-            <div className="p-4">
-              <table className="table-grid w-full">
-                <tbody>
-                  <tr>
-                    <td className="w-44">Bank Penerima</td>
-                    <td>
-                      {bankParts(delRow.bank_id).line1} — {bankParts(delRow.bank_id).no}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td>Jumlah</td>
-                    <td>{formatAmount(delRow.amount_gross)}</td>
-                  </tr>
-                  <tr>
-                    <td>Tgl Transaksi (PDP dibuat)</td>
-                    <td>{formatTglJakartaShort(delRow.performed_at)}</td>
-                  </tr>
-                </tbody>
-              </table>
-              <div className="mt-3">
+            <div className="p-4 space-y-3">
+              <div>
+                <div className="text-xs mb-1">Bank Penerima</div>
+                <div className="border rounded px-3 py-2 bg-gray-50">{bankLabel(delRow.bank_id)}</div>
+              </div>
+              <div>
+                <div className="text-xs mb-1">Jumlah</div>
+                <div className="border rounded px-3 py-2 bg-gray-50">
+                  {formatAmount(delRow.amount_gross)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs mb-1">Tgl Transaksi</div>
+                <div className="border rounded px-3 py-2 bg-gray-50">
+                  {formatWIBWithOffset(delRow.performed_at)}
+                </div>
+              </div>
+              <div>
                 <label className="block text-xs mb-1">Keterangan Penghapusan</label>
                 <input
                   className="border rounded px-3 py-2 w-full"
