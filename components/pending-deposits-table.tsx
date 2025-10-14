@@ -321,10 +321,10 @@ export default function PendingDepositsTable() {
             {/* PROPORSI KOLOM: ID 7% | Bank 43% | Amount 12% | Tgl 16% | Status 10% | Action 12% */}
             <colgroup>
               <col style={{ width: "7%" }} />
-              <col style={{ width: "43%" }} />
+              <col style={{ width: "36%" }} />
+              <col style={{ width: "18%" }} />
               <col style={{ width: "12%" }} />
-              <col style={{ width: "16%" }} />
-              <col style={{ width: "10%" }} />
+              <col style={{ width: "15%" }} />
               <col style={{ width: "12%" }} />
             </colgroup>
 
