@@ -35,7 +35,7 @@ type LeadLite = { id: number; name: string | null };
 type ProfileLite = { user_id: string; full_name: string };
 
 /** ================= Helpers ================= **/
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 
 const CAT_OPTIONS = [
   { key: "ALL",          label: "All" },
