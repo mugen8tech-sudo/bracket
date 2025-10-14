@@ -227,7 +227,7 @@ export default function PendingDepositsTable() {
       return;
     }
     const { error } = await supabase.rpc("assign_pending_deposit", {
-      p_pending_deposit_id: assignRow.id,
+      p_pending_id: assignRow.id,
       p_lead_id: assignLeadPicked.id,
       p_username: assignLeadPicked.username,
       p_txn_at_final: new Date(assignTxnAt).toISOString(),
