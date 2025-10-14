@@ -180,20 +180,19 @@ export default function BankMutationsTable() {
       list = list.filter((r) => !isTransferFee(r.description)); // Expenses umum
     }
 
-    // ---- Pairing WD + FEE (negatif) & REVERSAL_WD + FEE (positif) ----
-    // (tanpa duplikasi & fee selalu tepat setelah pasangannya)
+    // ---- Pairing WD + Fee (FEE DI ATAS WD) & REVERSAL_WD + Reversal Fee ----
     if (fCat !== "TRANSFER_FEE") {
       const feeNegByRef = new Map<number, BankMutationRow>(); // WD Fee (amount < 0)
       const feePosByRef = new Map<number, BankMutationRow>(); // Reversal WD Fee (amount > 0)
-      const wdIdsInPage = new Set<number>();
-      const revWdIdsInPage = new Set<number>();
+      const wdRefs = new Set<number>();
+      const revWdRefs = new Set<number>();
 
       for (const r of list) {
-        if ((r.kind === "WITHDRAWAL") && r.deposit_id) wdIdsInPage.add(r.deposit_id);
-        if ((r.kind === "REVERSAL_WITHDRAWAL") && r.deposit_id) revWdIdsInPage.add(r.deposit_id);
+        if (r.kind === "WITHDRAWAL" && r.deposit_id) wdRefs.add(r.deposit_id);
+        if (r.kind === "REVERSAL_WITHDRAWAL" && r.deposit_id) revWdRefs.add(r.deposit_id);
         if (r.kind === "EXPENSE" && isTransferFee(r.description) && r.deposit_id) {
-          if (r.amount < 0) { if (!feeNegByRef.has(r.deposit_id)) feeNegByRef.set(r.deposit_id, r); }
-          else if (r.amount > 0) { if (!feePosByRef.has(r.deposit_id)) feePosByRef.set(r.deposit_id, r); }
+          if (r.amount < 0) feeNegByRef.set(r.deposit_id, r);
+          else feePosByRef.set(r.deposit_id, r);
         }
       }
 
@@ -201,30 +200,44 @@ export default function BankMutationsTable() {
       const ordered: BankMutationRow[] = [];
 
       for (const r of list) {
-        const isFee = r.kind === "EXPENSE" && isTransferFee(r.description) && !!r.deposit_id;
+        const isFee =
+          r.kind === "EXPENSE" && isTransferFee(r.description) && !!r.deposit_id;
 
         if (isFee) {
-          // Jika WD-nya ada di halaman ini → fee disisipkan setelah WD; skip di sini
-          if (r.amount < 0 && wdIdsInPage.has(r.deposit_id!)) continue;
-          // Jika Reversal WD-nya ada di halaman ini → fee reversal disisipkan setelah REV WD; skip di sini
-          if (r.amount >= 0 && revWdIdsInPage.has(r.deposit_id!)) continue;
-          // Jika pasangannya TIDAK ada di halaman, tampilkan fee apa adanya
+          // Jika pasangan (WD/REV_WD) ada di halaman, fee akan disisipkan di sana (skip di sini)
+          if ((r.amount < 0 && wdRefs.has(r.deposit_id!)) ||
+              (r.amount >= 0 && revWdRefs.has(r.deposit_id!))) {
+            continue;
+          }
+          // Jika pasangannya tidak ada di halaman, tampilkan fee apa adanya
           if (!usedFeeIds.has(r.id)) { ordered.push(r); usedFeeIds.add(r.id); }
           continue;
         }
 
-        // tampilkan baris non-fee
-        ordered.push(r);
-
-        // sisipkan fee sesuai jenis transaksi
-        if ((r.kind === "WITHDRAWAL") && r.deposit_id) {
+        // WD → taruh FEE dulu, baru WD
+        if (r.kind === "WITHDRAWAL" && r.deposit_id) {
           const fee = feeNegByRef.get(r.deposit_id);
-          if (fee && !usedFeeIds.has(fee.id)) { ordered.push(fee); usedFeeIds.add(fee.id); }
+          if (fee && !usedFeeIds.has(fee.id)) {
+            ordered.push(fee);
+            usedFeeIds.add(fee.id);
+          }
+          ordered.push(r);
+          continue;
         }
-        if ((r.kind === "REVERSAL_WITHDRAWAL") && r.deposit_id) {
+
+        // REVERSAL_WD → taruh FEE REVERSAL dulu, baru REV_WD
+        if (r.kind === "REVERSAL_WITHDRAWAL" && r.deposit_id) {
           const fee = feePosByRef.get(r.deposit_id);
-          if (fee && !usedFeeIds.has(fee.id)) { ordered.push(fee); usedFeeIds.add(fee.id); }
+          if (fee && !usedFeeIds.has(fee.id)) {
+            ordered.push(fee);
+            usedFeeIds.add(fee.id);
+          }
+          ordered.push(r);
+          continue;
         }
+
+        // selain itu, render biasa
+        ordered.push(r);
       }
 
       list = ordered;
