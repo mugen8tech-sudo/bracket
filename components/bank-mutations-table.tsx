@@ -53,7 +53,7 @@ function kindsForCat(cat: CatKey): MutationKind[] | "EXPENSE_TRANSFER" | "ALL" {
   switch (cat) {
     case "DEPO":       return ["DEPOSIT", "REVERSAL_DEPOSIT"];
     case "WD":         return ["WITHDRAWAL", "REVERSAL_WITHDRAWAL"];
-    case "PENDING_DP": return ["PENDING_DEPOSIT", "REVERSAL_PENDING_DEPOSIT"];
+    case "PENDING_DP": return ["PENDING_DEPOSIT", "REVERSAL_PENDING_DEPOSIT", "REVERSAL_DEPOSIT"]; // ambil dulu, nanti pasca-filter
     case "SESAMA_CM":  return ["INTERBANK_OUT", "INTERBANK_IN"];
     case "ADJ":        return ["ADJUSTMENT"];
     case "EXPENSE":    return ["EXPENSE"];          // nanti dipilah: BUKAN transfer fee
@@ -92,11 +92,13 @@ function formatIdDateTime(d: string | Date | null | undefined) {
   if (!d) return "-";
   const dt = typeof d === "string" ? new Date(d) : d;
   const date = dt.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" });
-  const time = dt.toLocaleTimeString("id-ID", { hour12: false, timeZone: "Asia/Jakarta" }).replace(/:/g, ".");
+  const time = dt
+    .toLocaleTimeString("id-ID", { hour12: false, timeZone: "Asia/Jakarta" })
+    .replace(/:/g, ".");
   return `${date} ${time}`;
 }
 
-// Parse timestamp PDP-YYYY-MM-DD HH:mm:ss dari description → Date (WIB)
+// Parse "PDP-YYYY-MM-DD HH:mm:ss" → Date (WIB)
 function parsePdpTimestamp(desc?: string | null): Date | null {
   if (!desc) return null;
   const m = desc.match(/PDP-([0-9]{4})-([0-9]{2})-([0-9]{2})\s+([0-9]{2}):([0-9]{2}):([0-9]{2})/i);
@@ -105,13 +107,29 @@ function parsePdpTimestamp(desc?: string | null): Date | null {
   return new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}+07:00`);
 }
 
-// Ekstrak alasan penghapusan: setelah "|" atau setelah "Alasan:" / "Reason:"
-function extractDeletionReason(desc?: string | null) {
+// Ambil hanya "alasan" dari description reversal PDP.
+// Jika desc generik (mis. "Reverse Pending Deposit"), kosongkan.
+// Jika berisi alasan (mis. "SALAH INPUT" atau "Alasan: <teks>"), tampilkan alasannya saja.
+function reasonFromReversalPdpDesc(desc?: string | null) {
   if (!desc) return "";
-  const pipe = desc.split("|");
-  if (pipe.length > 1) return pipe.slice(1).join("|").trim();
-  const m = desc.match(/(?:alasan|reason)\s*:\s*(.+)$/i);
-  return m ? m[1].trim() : "";
+  const raw = desc.trim();
+  const low = raw.toLowerCase();
+  // buang frasa generik
+  const generics = [
+    "reverse pending deposit", "reversal pending deposit",
+    "reverse pending dp", "reversal pending dp",
+    "reverse pending depo", "reversal pending depo"
+  ];
+  if (generics.some(g => low.includes(g))) {
+    // jika ada "|", ambil sisi kanan sebagai alasan
+    const afterPipe = raw.split("|")[1]?.trim();
+    if (afterPipe) return afterPipe;
+    // coba pola "alasan: xxx" / "reason: xxx"
+    const m = raw.match(/(?:alasan|reason)\s*:\s*(.+)$/i);
+    return m ? m[1].trim() : "";
+  }
+  // kalau bukan frasa generik (contoh "SALAH INPUT"), anggap itu alasan
+  return raw;
 }
 
 /** ================= Komponen ================= **/
@@ -132,8 +150,8 @@ export default function BankMutationsTable() {
   const [leadMap, setLeadMap] = useState<Record<number, LeadLite>>({});
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({});
 
-  // mapping waktu PDP asal untuk REVERSAL_PENDING_DEPOSIT (dibangun dari data halaman)
-  const [revPdpTimeMap, setRevPdpTimeMap] = useState<Record<number, string | null>>({});
+  // mapping waktu PDP asal untuk reversal PDP (id reversal -> performed_at PDP asal)
+  const [revPdpTimeMap, setRevPdpTimeMap] = useState<Record<number, string>>({});
 
   // filters
   const [fId, setFId] = useState("");
@@ -273,9 +291,13 @@ export default function BankMutationsTable() {
       list = ordered;
     }
 
-    // === Pairing waktu PDP asal untuk REVERSAL_PENDING_DEPOSIT (berdasarkan data di halaman)
+    // === Pairing waktu PDP asal untuk reversal PDP (berdasarkan data di halaman)
     const pdpRows = list.filter(r => r.kind === "PENDING_DEPOSIT");
-    const revPdpRows = list.filter(r => r.kind === "REVERSAL_PENDING_DEPOSIT");
+    const revCandidates = list.filter(
+      r => r.kind === "REVERSAL_PENDING_DEPOSIT" || r.kind === "REVERSAL_DEPOSIT"
+    );
+
+    // bucket PENDING_DEPOSIT per (bank_id, |amount|), urut waktu naik
     const pdpBuckets = new Map<string, BankMutationRow[]>();
     for (const p of pdpRows) {
       const key = `${p.bank_id}|${Math.abs(p.amount)}`;
@@ -286,18 +308,31 @@ export default function BankMutationsTable() {
     for (const arr of pdpBuckets.values()) {
       arr.sort((a, b) => new Date(a.performed_at).getTime() - new Date(b.performed_at).getTime());
     }
-    const tmpRevMap: Record<number, string | null> = {};
-    for (const rv of revPdpRows) {
+
+    // cari pasangan PDP untuk tiap kandidat reversal
+    const tmpRevMap: Record<number, string> = {};
+    for (const rv of revCandidates) {
       const key = `${rv.bank_id}|${Math.abs(rv.amount)}`;
       const arr = pdpBuckets.get(key) || [];
-      const rvTime = new Date(rv.performed_at).getTime();
+      if (!arr.length) continue;
+      const tRv = new Date(rv.performed_at).getTime();
       let picked: BankMutationRow | undefined;
+      // ambil PDP terakhir yang waktunya <= waktu reversal
       for (let i = arr.length - 1; i >= 0; i--) {
-        if (new Date(arr[i].performed_at).getTime() <= rvTime) { picked = arr[i]; break; }
+        if (new Date(arr[i].performed_at).getTime() <= tRv) { picked = arr[i]; break; }
       }
-      tmpRevMap[rv.id] = picked?.performed_at ?? null;
+      if (picked) tmpRevMap[rv.id] = picked.performed_at;
     }
     setRevPdpTimeMap(tmpRevMap);
+
+    // Jika user memilih kategori "Pending DP", saring reversal deposit yang bukan reversal PDP
+    if (fCat === "PENDING_DP") {
+      list = list.filter(r =>
+        r.kind === "PENDING_DEPOSIT" ||
+        r.kind === "REVERSAL_PENDING_DEPOSIT" ||
+        !!tmpRevMap[r.id]
+      );
+    }
 
     setRows(list);
     setTotal(count ?? list.length);
@@ -346,16 +381,18 @@ export default function BankMutationsTable() {
     return `[${b.bank_code}] ${b.account_name} - ${b.account_no}`;
   };
 
-  // ===== Cat kolom: EXPENSE transfer fee → "Biaya Transaksi"
+  // helper: apakah baris ini adalah reversal dari Pending DP?
+  const isReversalOfPDP = (r: BankMutationRow) =>
+    r.kind === "REVERSAL_PENDING_DEPOSIT" || !!revPdpTimeMap[r.id];
+
+  // ===== Cat kolom
   const catLabelForRow = (r: BankMutationRow): string => {
-    if (r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") return "Depo";
     if (r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") return "WD";
-    if (r.kind === "PENDING_DEPOSIT" || r.kind === "REVERSAL_PENDING_DEPOSIT") return "Pending DP";
     if (r.kind === "INTERBANK_OUT" || r.kind === "INTERBANK_IN") return "Sesama CM";
     if (r.kind === "ADJUSTMENT") return "Adjustment";
-    if (r.kind === "EXPENSE") {
-      return isTransferFee(r.description) ? "Biaya Transaksi" : "Expense";
-    }
+    if (r.kind === "EXPENSE") return isTransferFee(r.description) ? "Biaya Transaksi" : "Expense";
+    if (r.kind === "PENDING_DEPOSIT" || isReversalOfPDP(r)) return "Pending DP";
+    if (r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") return "Depo";
     return "-";
   };
 
@@ -365,6 +402,9 @@ export default function BankMutationsTable() {
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
       const leadName = d?.lead_id ? (leadMap[d.lead_id!]?.name ?? "") : "";
       return `Depo dari ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
+    }
+    if (isReversalOfPDP(r)) {
+      return "Reversal Pending DP";
     }
     if (r.kind === "REVERSAL_DEPOSIT") {
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
@@ -380,9 +420,6 @@ export default function BankMutationsTable() {
       const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
       const leadName = w?.lead_id ? (leadMap[w.lead_id!]?.name ?? "") : "";
       return `Reversal WD dari ${w?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
-    }
-    if (r.kind === "REVERSAL_PENDING_DEPOSIT") {
-      return "Reversal Pending DP";
     }
     if (r.kind === "EXPENSE" && isTransferFee(r.description)) {
       const s = (r.description || "").toLowerCase();
@@ -402,30 +439,24 @@ export default function BankMutationsTable() {
 
   // ===== Tag [REVERSAL-<performed_at_asli>] khusus baris reversal
   const reversalTag = (r: BankMutationRow) => {
+    if (isReversalOfPDP(r)) {
+      const madeAt = revPdpTimeMap[r.id] ? formatIdDateTime(revPdpTimeMap[r.id]) : "-";
+      return `[REVERSAL-${madeAt}]`;
+    }
     if (r.kind === "REVERSAL_DEPOSIT") {
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
-      const madeAt = d?.performed_at
-        ? new Date(d.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
-        : "-";
+      const madeAt = d?.performed_at ? formatIdDateTime(d.performed_at) : "-";
       return `[REVERSAL-${madeAt}]`;
     }
     if (r.kind === "REVERSAL_WITHDRAWAL") {
       const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
-      const madeAt = w?.performed_at
-        ? new Date(w.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
-        : "-";
-      return `[REVERSAL-${madeAt}]`;
-    }
-    if (r.kind === "REVERSAL_PENDING_DEPOSIT") {
-      const madeAt = revPdpTimeMap[r.id]
-        ? new Date(revPdpTimeMap[r.id] as string).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
-        : "-";
+      const madeAt = w?.performed_at ? formatIdDateTime(w.performed_at) : "-";
       return `[REVERSAL-${madeAt}]`;
     }
     return null;
   };
 
-  // Tag khusus PDP (muncul di baris DEPOSIT hasil assign PDP) → format dd/mm/yyyy hh.mm.ss
+  // Tag PDP (untuk DEPOSIT hasil assign) → format dd/mm/yyyy hh.mm.ss
   const pdpTag = (r: BankMutationRow) => {
     if (r.kind !== "DEPOSIT") return null;
     const d = parsePdpTimestamp(r.description);
@@ -435,13 +466,11 @@ export default function BankMutationsTable() {
 
   // Desc cell rules:
   // - DEPOSIT hasil assign PDP → kosong (info PDP sudah di tag)
-  // - REVERSAL_PENDING_DEPOSIT → kosong kecuali ada alasan penghapusan
+  // - Reversal PDP → tampilkan hanya "alasan" (sembunyikan teks generik)
   // - lainnya → description apa adanya
   const descForRow = (r: BankMutationRow, pdpTagStr: string | null) => {
     if (r.kind === "DEPOSIT" && pdpTagStr) return "";
-    if (r.kind === "REVERSAL_PENDING_DEPOSIT") {
-      return extractDeletionReason(r.description);
-    }
+    if (isReversalOfPDP(r)) return reasonFromReversalPdpDesc(r.description);
     return r.description ?? "";
   };
 
@@ -574,8 +603,8 @@ export default function BankMutationsTable() {
                 return (
                   <tr key={r.id} className="align-top">
                     <td>{r.id}</td>
-                    <td>{new Date(r.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
-                    <td>{new Date(r.txn_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
+                    <td>{formatIdDateTime(r.performed_at)}</td>
+                    <td>{formatIdDateTime(r.txn_at)}</td>
                     <td>{catLabelForRow(r)}</td>
                     <td className="whitespace-normal break-words">
                       <div className="font-semibold">
