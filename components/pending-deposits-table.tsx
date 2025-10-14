@@ -363,7 +363,7 @@ export default function PendingDepositsTable() {
                   <tr key={r.id} className="align-top">
                     <td>{r.id}</td>
                     <td className="whitespace-normal break-words">
-                      <div className="font-semibold">{bankLabel(r.bank_id)}</div>
+                      <div className="font-semibold">{bankLabel(r)}</div>
                       <div className="my-1 h-px bg-gray-200" />
                       <div className="text-sm text-gray-700">
                         {r.description ?? "-"}
