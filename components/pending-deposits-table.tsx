@@ -434,7 +434,7 @@ export default function PendingDepositsTable() {
                           {r.description && r.description.trim() !== "" ? r.description : "-"}
                         </div>
                       </td>
-                      <td className="text-right">{formatAmount(r.amount_gross)}</td>
+                      <td className="text-left">{formatAmount(r.amount_gross)}</td>
                       <td>{formatTglJakartaShort(r.txn_at)}</td>
                       <td className="whitespace-normal break-words">{statusLabel}</td>
                       <td>{actionEl}</td>
