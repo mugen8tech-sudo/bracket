@@ -25,7 +25,6 @@ function formatTglJakartaShort(iso?: string | null) {
     month: "2-digit",
     year: "2-digit",
   });
-  // gaya jam "23.32" seperti di screenshot
   const jam = d
     .toLocaleTimeString("id-ID", {
       timeZone: "Asia/Jakarta",
@@ -47,7 +46,7 @@ type PendingDeposit = {
   amount_net: number;
   opened_at: string | null;
 
-  txn_at: string; // waktu dipilih saat BUAT PDP -> dipakai sebagai "Tgl" di tabel
+  txn_at: string; // waktu dipilih saat BUAT PDP -> dipakai sebagai "Tgl"
   performed_at: string; // waktu real SAAT PDP dibuat
   description: string | null;
 
@@ -203,7 +202,7 @@ export default function PendingDepositsTable() {
   });
   const [assignDesc, setAssignDesc] = useState<string>("");
 
-  // player search (re-use pola dari DP)
+  // player search
   const [leadQuery, setLeadQuery] = useState<string>("");
   const [leadOptions, setLeadOptions] = useState<LeadLite[]>([]);
   const [leadPicked, setLeadPicked] = useState<LeadLite | null>(null);
@@ -314,32 +313,46 @@ export default function PendingDepositsTable() {
 
       <div className="overflow-auto rounded border bg-white">
         <form onSubmit={applyFilters}>
-          <table className="table-grid min-w-[1100px]" style={{ borderCollapse: "collapse" }}>
+          {/* Gunakan table fixed + colgroup agar proporsional */}
+          <table
+            className="table-grid table-fixed w-full min-w-[1000px]"
+            style={{ borderCollapse: "collapse" }}
+          >
+            {/* PROPORSI KOLOM: ID 7% | Bank 43% | Amount 12% | Tgl 16% | Status 10% | Action 12% */}
+            <colgroup>
+              <col style={{ width: "7%" }} />
+              <col style={{ width: "43%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "16%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "12%" }} />
+            </colgroup>
+
             <thead>
-              {/* FILTERS: hanya di kolom Tgl + Status + Action (sesuai screenshot) */}
+              {/* FILTERS: hanya di Tgl + Status + Action */}
               <tr className="filters">
-                <th className="w-24" />
-                <th className="min-w-[320px]" />
-                <th className="w-32" />
-                <th className="w-56">
+                <th />
+                <th />
+                <th />
+                <th>
                   <div className="flex flex-col gap-1">
                     <label className="text-xs">Start</label>
                     <input
                       type="date"
                       value={fStart}
                       onChange={(e) => setFStart(e.target.value)}
-                      className="border rounded px-2 py-1"
+                      className="border rounded px-2 py-1 w-full"
                     />
                     <label className="text-xs">Finish</label>
                     <input
                       type="date"
                       value={fFinish}
                       onChange={(e) => setFFinish(e.target.value)}
-                      className="border rounded px-2 py-1"
+                      className="border rounded px-2 py-1 w-full"
                     />
                   </div>
                 </th>
-                <th className="w-40">
+                <th>
                   <select
                     value={fStatus}
                     onChange={(e) => setFStatus(e.target.value as StatusFilter)}
@@ -350,21 +363,21 @@ export default function PendingDepositsTable() {
                     <option value="NOT_ASSIGNED">NOT ASSIGNED</option>
                   </select>
                 </th>
-                <th className="w-40">
+                <th>
                   <button type="submit" className="rounded bg-blue-600 text-white px-3 py-1">
                     submit
                   </button>
                 </th>
               </tr>
 
-              {/* HEADER sesuai screenshot */}
+              {/* HEADER */}
               <tr>
-                <th className="text-left w-24">ID</th>
-                <th className="text-left min-w-[320px]">Bank</th>
-                <th className="text-right w-32">Amount</th>
-                <th className="text-left w-56">Tgl</th>
-                <th className="text-left w-40">Status</th>
-                <th className="text-left w-40">Action</th>
+                <th className="text-left">ID</th>
+                <th className="text-left">Bank</th>
+                <th className="text-right">Amount</th>
+                <th className="text-left">Tgl</th>
+                <th className="text-left">Status</th>
+                <th className="text-left">Action</th>
               </tr>
             </thead>
 
@@ -423,7 +436,7 @@ export default function PendingDepositsTable() {
                       </td>
                       <td className="text-right">{formatAmount(r.amount_gross)}</td>
                       <td>{formatTglJakartaShort(r.txn_at)}</td>
-                      <td>{statusLabel}</td>
+                      <td className="whitespace-normal break-words">{statusLabel}</td>
                       <td>{actionEl}</td>
                     </tr>
                   );
