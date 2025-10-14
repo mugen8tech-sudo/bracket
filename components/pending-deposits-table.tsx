@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
-/** ===== Helpers (konsisten dengan tabel lain) ===== */
+/* ========= Helpers ========= */
+const PAGE_SIZE = 50;
+
 function todayJakartaYmd() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 }
@@ -14,20 +16,55 @@ function startOfDayJakartaISO(ymd: string) {
 function endOfDayJakartaISO(ymd: string) {
   return new Date(`${ymd}T23:59:59.999+07:00`).toISOString();
 }
+function formatTglJakartaShort(iso?: string | null) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  const tgl = d.toLocaleDateString("id-ID", {
+    timeZone: "Asia/Jakarta",
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  });
+  // gaya jam "23.32" seperti di screenshot
+  const jam = d
+    .toLocaleTimeString("id-ID", {
+      timeZone: "Asia/Jakarta",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
+    .replace(":", ".");
+  return `${tgl} ${jam}`;
+}
 
-/** ===== Types ===== */
+/* ========= Types ========= */
 type PendingDeposit = {
   id: number;
   tenant_id: string;
   bank_id: number;
   amount_gross: number;
+  fee_amount: number;
+  amount_net: number;
+  opened_at: string | null;
+
+  txn_at: string; // waktu dipilih saat BUAT PDP -> dipakai sebagai "Tgl" di tabel
+  performed_at: string; // waktu real SAAT PDP dibuat
   description: string | null;
-  performed_at: string; // waktu real (klik)
-  is_assigned: boolean;
-  is_deleted: boolean;
+
+  bank_mutation_id: number;
+
   assigned_deposit_id: number | null;
   assigned_at: string | null;
+  assigned_txn_at: string | null;
   assigned_by: string | null;
+  assigned_lead_id: number | null;
+  assigned_username: string | null;
+
+  deleted_at: string | null;
+  deleted_by: string | null;
+  delete_reason: string | null;
+
+  created_by: string | null;
 };
 
 type BankLite = {
@@ -35,11 +72,6 @@ type BankLite = {
   bank_code: string;
   account_name: string;
   account_no: string;
-};
-
-type DepositLite = {
-  id: number;
-  username: string | null;
 };
 
 type LeadLite = {
@@ -51,137 +83,160 @@ type LeadLite = {
   bank_no: string | null;
 };
 
-/** ===== Komponen ===== */
+type StatusFilter = "ALL" | "ASSIGNED" | "NOT_ASSIGNED";
+
+/* ========= Komponen ========= */
 export default function PendingDepositsTable() {
   const supabase = supabaseBrowser();
 
-  // ringkasan header: total yg belum di-assign & belum di-delete
-  const [unassignedTotal, setUnassignedTotal] = useState<number>(0);
+  // header summary
+  const [notAssignedCount, setNotAssignedCount] = useState<number>(0);
 
-  // filters
+  // data master
+  const [banks, setBanks] = useState<BankLite[]>([]);
+
+  // tabel
+  const [rows, setRows] = useState<PendingDeposit[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  // filters (sesuai screenshot)
   const [fStart, setFStart] = useState(todayJakartaYmd());
   const [fFinish, setFFinish] = useState(todayJakartaYmd());
-  const [fStatus, setFStatus] = useState<"ALL" | "NOT_ASSIGNED" | "ASSIGNED">(
-    "NOT_ASSIGNED"
-  );
+  const [fStatus, setFStatus] = useState<StatusFilter>("NOT_ASSIGNED");
 
-  // data utama
-  const [rows, setRows] = useState<PendingDeposit[]>([]);
-  const [banks, setBanks] = useState<Record<number, BankLite>>({});
-  const [depositMap, setDepositMap] = useState<Record<number, DepositLite>>({});
-  const [loading, setLoading] = useState(true);
+  // load list bank (untuk label)
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("banks")
+        .select("id, bank_code, account_name, account_no")
+        .order("id", { ascending: false });
+      setBanks(((data as BankLite[]) ?? []) as BankLite[]);
+    })();
+  }, [supabase]);
 
-  // ======== Load header counter ========
+  // count header: NOT ASSIGNED (belum assign & belum delete)
   const loadHeaderCount = async () => {
     const { count } = await supabase
       .from("pending_deposits")
       .select("id", { count: "exact", head: true })
-      .eq("is_assigned", false)
-      .eq("is_deleted", false);
-    setUnassignedTotal(count ?? 0);
+      .is("assigned_deposit_id", null)
+      .is("deleted_at", null);
+    setNotAssignedCount(count ?? 0);
   };
 
-  // ======== Load table ========
-  const load = async () => {
-    setLoading(true);
-
+  // query builder (urut & filter by TGL = txn_at agar sesuai yang ditampilkan)
+  const buildQuery = () => {
     let q = supabase
       .from("pending_deposits")
       .select("*", { count: "exact" })
-      .order("performed_at", { ascending: false });
+      .order("txn_at", { ascending: false });
 
-    if (fStart) q = q.gte("performed_at", startOfDayJakartaISO(fStart));
-    if (fFinish) q = q.lte("performed_at", endOfDayJakartaISO(fFinish));
+    if (fStart) q = q.gte("txn_at", startOfDayJakartaISO(fStart));
+    if (fFinish) q = q.lte("txn_at", endOfDayJakartaISO(fFinish));
 
+    if (fStatus === "ASSIGNED") q = q.not("assigned_deposit_id", "is", null);
     if (fStatus === "NOT_ASSIGNED") {
-      q = q.eq("is_assigned", false);
-    } else if (fStatus === "ASSIGNED") {
-      q = q.eq("is_assigned", true);
+      q = q.is("assigned_deposit_id", null).is("deleted_at", null);
     }
 
-    const { data, error } = await q;
+    return q;
+  };
+
+  const load = async (pageToLoad = page) => {
+    setLoading(true);
+
+    const from = (pageToLoad - 1) * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    const { data, error, count } = await buildQuery().range(from, to);
     if (error) {
       setLoading(false);
       alert(error.message);
       return;
     }
-    const list = (data as PendingDeposit[]) ?? [];
-    setRows(list);
 
-    // lookups: banks
-    const bankIds = Array.from(new Set(list.map((r) => r.bank_id)));
-    if (bankIds.length > 0) {
-      const { data: bList } = await supabase
-        .from("banks")
-        .select("id, bank_code, account_name, account_no")
-        .in("id", bankIds);
-      const map: Record<number, BankLite> = {};
-      (bList ?? []).forEach((b: any) => (map[b.id] = b));
-      setBanks(map);
-    } else {
-      setBanks({});
-    }
-
-    // lookups: assigned deposit → username
-    const depIds = Array.from(
-      new Set(
-        list
-          .map((r) => r.assigned_deposit_id)
-          .filter((v): v is number => !!v)
-      )
-    );
-    if (depIds.length > 0) {
-      const { data: deps } = await supabase
-        .from("deposits")
-        .select("id, username")
-        .in("id", depIds);
-      const dmap: Record<number, DepositLite> = {};
-      (deps ?? []).forEach((d: any) => (dmap[d.id] = d));
-      setDepositMap(dmap);
-    } else {
-      setDepositMap({});
-    }
+    setRows(((data as PendingDeposit[]) ?? []) as PendingDeposit[]);
+    setTotal(count ?? 0);
+    setPage(pageToLoad);
 
     setLoading(false);
+    await loadHeaderCount();
   };
 
   useEffect(() => {
-    loadHeaderCount();
-    load();
+    load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const submitFilters: React.FormEventHandler = async (e) => {
+  const applyFilters: React.FormEventHandler = (e) => {
     e.preventDefault();
-    await Promise.all([loadHeaderCount(), load()]);
+    load(1);
   };
 
-  // ======== Assign modal ========
+  // ===== util label bank sesuai tampilan screenshot =====
+  const bankParts = (id: number) => {
+    const b = banks.find((x) => x.id === id);
+    if (!b)
+      return {
+        line1: "[]",
+        no: "-",
+      };
+    return {
+      line1: `[${b.bank_code}] ${b.account_name}`,
+      no: b.account_no,
+    };
+  };
+
+  /* ====== Assign modal state ====== */
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignRow, setAssignRow] = useState<PendingDeposit | null>(null);
   const [assignTxnAt, setAssignTxnAt] = useState<string>(() => {
     const d = new Date();
     const pad = (n: number) => n.toString().padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
-      d.getDate()
-    )}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+      d.getHours()
+    )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   });
-  const [assignLeadQuery, setAssignLeadQuery] = useState("");
-  const [assignLeadOpts, setAssignLeadOpts] = useState<LeadLite[]>([]);
-  const [assignLeadPicked, setAssignLeadPicked] = useState<LeadLite | null>(
-    null
-  );
-  const [assignLeadIndex, setAssignLeadIndex] = useState(0);
+  const [assignDesc, setAssignDesc] = useState<string>("");
+
+  // player search (re-use pola dari DP)
+  const [leadQuery, setLeadQuery] = useState<string>("");
+  const [leadOptions, setLeadOptions] = useState<LeadLite[]>([]);
+  const [leadPicked, setLeadPicked] = useState<LeadLite | null>(null);
+  const [leadIndex, setLeadIndex] = useState<number>(0);
   const playerInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (!assignOpen) return;
+      const q = leadQuery.trim();
+      if (!q) {
+        setLeadOptions([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("leads")
+        .select("id, username, name, bank, bank_name, bank_no")
+        .ilike("username", `%${q}%`)
+        .limit(10);
+      if (!active) return;
+      if (error) return;
+      setLeadOptions((data as LeadLite[]) ?? []);
+      setLeadIndex(0);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [leadQuery, assignOpen, supabase]);
 
   const openAssign = (r: PendingDeposit) => {
     setAssignRow(r);
     setAssignOpen(true);
-    setAssignLeadQuery("");
-    setAssignLeadOpts([]);
-    setAssignLeadPicked(null);
-    setAssignLeadIndex(0);
-    // default transaction date saat modal dibuka
     const d = new Date();
     const pad = (n: number) => n.toString().padStart(2, "0");
     setAssignTxnAt(
@@ -189,58 +244,38 @@ export default function PendingDepositsTable() {
         d.getHours()
       )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
     );
+    setAssignDesc("");
+    setLeadPicked(null);
+    setLeadOptions([]);
+    setLeadIndex(0);
+    setLeadQuery("");
+    setTimeout(() => playerInputRef.current?.focus(), 0);
   };
-  const closeAssign = useCallback(() => setAssignOpen(false), []);
-
-  // === Player search (identik dengan banks-table: exact ILIKE + navigasi keyboard) ===
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      if (!assignOpen) return;
-      const q = assignLeadQuery.trim();
-      if (!q || assignLeadPicked) {
-        setAssignLeadOpts([]);
-        return;
-      }
-      const { data, error } = await supabase
-        .from("leads")
-        .select("id, username, name, bank, bank_name, bank_no")
-        .ilike("username", q.trim()) // TANPA wildcard—samakan dengan banks-table
-        .limit(10);
-      if (!active) return;
-      if (!error) {
-        setAssignLeadOpts((data as LeadLite[]) ?? []);
-        setAssignLeadIndex(0);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [assignLeadQuery, assignLeadPicked, assignOpen, supabase]); // ← sama pola dependensi
-  // (mengikuti pola DP/WD di banks-table untuk pengalaman yang konsisten). :contentReference[oaicite:1]{index=1}
 
   const submitAssign = async () => {
     if (!assignRow) return;
-    if (!assignLeadPicked || !assignLeadPicked.username) {
-      alert("Pilih Player (username) terlebih dahulu.");
+    if (!leadPicked || !leadPicked.username) {
+      alert("Pilih Player (username) lebih dulu.");
       playerInputRef.current?.focus();
       return;
     }
+    const iso = new Date(assignTxnAt).toISOString();
     const { error } = await supabase.rpc("assign_pending_deposit", {
       p_pending_id: assignRow.id,
-      p_lead_id: assignLeadPicked.id,
-      p_username: assignLeadPicked.username,
-      p_txn_at_final: new Date(assignTxnAt).toISOString(),
+      p_lead_id: leadPicked.id,
+      p_username: leadPicked.username,
+      p_txn_at_final: iso,
+      p_description: assignDesc || null,
     });
     if (error) {
       alert(error.message);
       return;
     }
     setAssignOpen(false);
-    await Promise.all([loadHeaderCount(), load()]);
+    await load(page);
   };
 
-  // ======== Delete modal ========
+  /* ====== Delete modal state ====== */
   const [delOpen, setDelOpen] = useState(false);
   const [delRow, setDelRow] = useState<PendingDeposit | null>(null);
   const [delNote, setDelNote] = useState("");
@@ -250,103 +285,52 @@ export default function PendingDepositsTable() {
     setDelNote("");
     setDelOpen(true);
   };
-  const closeDelete = useCallback(() => setDelOpen(false), []);
 
   const submitDelete = async () => {
     if (!delRow) return;
-    if (!delNote.trim()) {
-      alert("Keterangan Penghapusan wajib diisi");
-      return;
-    }
     const { error } = await supabase.rpc("delete_pending_deposit", {
-      p_pending_deposit_id: delRow.id,
-      p_reason: delNote.trim(),
+      p_pending_id: delRow.id,
+      p_txn_at_final: new Date().toISOString(), // tanpa input tanggal (sesuai screenshot)
+      p_reason: delNote || null,
     });
     if (error) {
       alert(error.message);
       return;
     }
     setDelOpen(false);
-    await Promise.all([loadHeaderCount(), load()]);
+    await load(page);
   };
 
-  /** ======== ESC close (disamakan dengan Deposits & Withdrawals) ======== */
-  useEffect(() => {
-    if (!assignOpen && !delOpen) return;
+  const canPrev = page > 1;
+  const canNext = page < totalPages;
+  const pageLabel = useMemo(() => `Page ${page} / ${totalPages}`, [page, totalPages]);
 
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        if (assignOpen) closeAssign();
-        if (delOpen) closeDelete();
-      }
-    };
-
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [assignOpen, delOpen, closeAssign, closeDelete]);
-
-  // ======== Render helpers ========
-  const headerTitle = useMemo(
-    () => `Pending Deposits | (${unassignedTotal}) not assigned`,
-    [unassignedTotal]
-  );
-
-  const bankLabel = (r: PendingDeposit) => {
-    const b = banks[r.bank_id];
-    if (!b) return "[]";
-    return `[${b.bank_code}] ${b.account_name} - ${b.account_no}`;
-  };
-
-  const statusCell = (r: PendingDeposit) => {
-    if (r.is_assigned) {
-      const dep = r.assigned_deposit_id
-        ? depositMap[r.assigned_deposit_id]
-        : undefined;
-      const username = dep?.username ?? "-";
-      return (
-        <>
-          <div>Player: {username}</div>
-          <div className="text-xs text-gray-500">Sudah di assign</div>
-        </>
-      );
-    }
-    return (
-      <>
-        <div>PENDING ASSIGNMENT</div>
-        {r.is_deleted && (
-          <div className="text-xs text-gray-500">Sudah di Delete</div>
-        )}
-      </>
-    );
-  };
-
+  /* ====== RENDER ====== */
   return (
     <div className="space-y-3">
       <div className="rounded border bg-white p-3 text-sm">
-        <b>{headerTitle}</b>
+        <b>Pending Deposits</b> | <b>({notAssignedCount})</b> not assigned
       </div>
 
       <div className="overflow-auto rounded border bg-white">
-        <form onSubmit={submitFilters}>
-          <table
-            className="table-grid min-w-[1100px]"
-            style={{ borderCollapse: "collapse" }}
-          >
+        <form onSubmit={applyFilters}>
+          <table className="table-grid min-w-[1100px]" style={{ borderCollapse: "collapse" }}>
             <thead>
-              {/* ===== Filter bar ===== */}
+              {/* FILTERS: hanya di kolom Tgl + Status + Action (sesuai screenshot) */}
               <tr className="filters">
-                <th className="w-20" />
-                <th className="w-[360px]" />
+                <th className="w-24" />
+                <th className="min-w-[320px]" />
                 <th className="w-32" />
-                <th className="w-52">
+                <th className="w-56">
                   <div className="flex flex-col gap-1">
+                    <label className="text-xs">Start</label>
                     <input
                       type="date"
                       value={fStart}
                       onChange={(e) => setFStart(e.target.value)}
                       className="border rounded px-2 py-1"
                     />
+                    <label className="text-xs">Finish</label>
                     <input
                       type="date"
                       value={fFinish}
@@ -355,39 +339,32 @@ export default function PendingDepositsTable() {
                     />
                   </div>
                 </th>
-                <th className="w-[220px]">
+                <th className="w-40">
                   <select
                     value={fStatus}
-                    onChange={(e) =>
-                      setFStatus(
-                        e.target.value as "ALL" | "NOT_ASSIGNED" | "ASSIGNED"
-                      )
-                    }
-                    className="border rounded px-2 py-1 w-full max-w-[180px]"
+                    onChange={(e) => setFStatus(e.target.value as StatusFilter)}
+                    className="w-full border rounded px-2 py-1"
                   >
                     <option value="ALL">ALL</option>
                     <option value="ASSIGNED">ASSIGNED</option>
                     <option value="NOT_ASSIGNED">NOT ASSIGNED</option>
                   </select>
                 </th>
-                <th className="w-[160px] text-right">
-                  <button
-                    type="submit"
-                    className="rounded bg-blue-600 text-white px-3 py-1"
-                  >
+                <th className="w-40">
+                  <button type="submit" className="rounded bg-blue-600 text-white px-3 py-1">
                     submit
                   </button>
                 </th>
               </tr>
 
-              {/* ===== Header kolom ===== */}
+              {/* HEADER sesuai screenshot */}
               <tr>
-                <th className="text-left w-20">ID</th>
-                <th className="text-left min-w-[360px]">Bank</th>
-                <th className="text-left w-32">Amount</th>
-                <th className="text-left w-52">Tgl</th>
-                <th className="text-left w-[220px]">Status</th>
-                <th className="text-left w-[160px]">Action</th>
+                <th className="text-left w-24">ID</th>
+                <th className="text-left min-w-[320px]">Bank</th>
+                <th className="text-right w-32">Amount</th>
+                <th className="text-left w-56">Tgl</th>
+                <th className="text-left w-40">Status</th>
+                <th className="text-left w-40">Action</th>
               </tr>
             </thead>
 
@@ -401,65 +378,103 @@ export default function PendingDepositsTable() {
                   <td colSpan={6}>No data</td>
                 </tr>
               ) : (
-                rows.map((r) => (
-                  <tr key={r.id} className="align-top">
-                    <td className="py-1">{r.id}</td>
-                    <td className="whitespace-normal break-words py-1">
-                      <div className="font-semibold">{bankLabel(r)}</div>
-                      <div className="my-1 h-px bg-gray-200" />
-                      <div className="text-sm text-gray-700">
-                        {r.description ?? "-"}
+                rows.map((r) => {
+                  const b = bankParts(r.bank_id);
+
+                  const statusLabel = r.deleted_at
+                    ? "DELETED"
+                    : r.assigned_deposit_id
+                    ? "ASSIGNED"
+                    : "PENDING ASSIGNMENT";
+
+                  const actionEl =
+                    r.assigned_deposit_id || r.deleted_at ? (
+                      <span className="text-gray-500">
+                        {r.assigned_deposit_id ? "Sudah di Assign" : "Sudah di Delete"}
+                      </span>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded bg-blue-600 text-white px-3 py-1"
+                          onClick={() => openAssign(r)}
+                        >
+                          Assign
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded bg-red-600 text-white px-3 py-1"
+                          onClick={() => openDelete(r)}
+                        >
+                          Delete
+                        </button>
                       </div>
-                    </td>
-                    <td className="text-left py-1">
-                      {formatAmount(r.amount_gross)}
-                    </td>
-                    <td className="py-1 whitespace-nowrap">
-                      {new Date(r.performed_at).toLocaleString("id-ID", {
-                        timeZone: "Asia/Jakarta",
-                      })}
-                    </td>
-                    <td className="whitespace-normal break-words py-1">
-                      {statusCell(r)}
-                    </td>
-                    <td className="space-x-2 py-1">
-                      {!r.is_assigned && !r.is_deleted ? (
-                        <>
-                          <button
-                            onClick={() => openAssign(r)}
-                            className="rounded bg-blue-600 text-white px-3 py-1"
-                            type="button"
-                          >
-                            Assign
-                          </button>
-                          <button
-                            onClick={() => openDelete(r)}
-                            className="rounded bg-red-600 text-white px-3 py-1"
-                            type="button"
-                          >
-                            Delete
-                          </button>
-                        </>
-                      ) : (
-                        <span className="text-sm text-gray-600">
-                          {r.is_assigned ? "Sudah di assign" : "Sudah di Delete"}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))
+                    );
+
+                  return (
+                    <tr key={r.id} className="align-top">
+                      <td>{r.id}</td>
+                      <td className="whitespace-normal break-words">
+                        <div className="font-semibold">{b.line1}</div>
+                        <div className="text-xs">{b.no}</div>
+                        <div className="text-xs text-gray-600">
+                          {r.description && r.description.trim() !== "" ? r.description : "-"}
+                        </div>
+                      </td>
+                      <td className="text-right">{formatAmount(r.amount_gross)}</td>
+                      <td>{formatTglJakartaShort(r.txn_at)}</td>
+                      <td>{statusLabel}</td>
+                      <td>{actionEl}</td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </form>
       </div>
 
-      {/* ===== Modal: ASSIGN ===== */}
+      {/* pagination */}
+      <div className="flex justify-center">
+        <nav className="inline-flex items-center gap-1 text-sm select-none">
+          <button
+            onClick={() => canPrev && load(1)}
+            disabled={!canPrev}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            First
+          </button>
+          <button
+            onClick={() => canPrev && load(page - 1)}
+            disabled={!canPrev}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="px-3 py-1 rounded border bg-white">{pageLabel}</span>
+          <button
+            onClick={() => canNext && load(page + 1)}
+            disabled={!canNext}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Next
+          </button>
+          <button
+            onClick={() => canNext && load(totalPages)}
+            disabled={!canNext}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Last
+          </button>
+        </nav>
+      </div>
+
+      {/* ====== MODAL ASSIGN ====== */}
       {assignOpen && assignRow && (
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
           onMouseDown={(e) => {
-            if (e.currentTarget === e.target) closeAssign();
+            if (e.currentTarget === e.target) setAssignOpen(false);
           }}
         >
           <form
@@ -470,34 +485,83 @@ export default function PendingDepositsTable() {
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
             <div className="p-4 border-b font-semibold">
-              Deposit to{" "}
-              {banks[assignRow.bank_id]
-                ? `[${banks[assignRow.bank_id].bank_code}] ${banks[assignRow.bank_id].account_name} - ${banks[assignRow.bank_id].account_no}`
-                : "-"}
+              Deposit to [{bankParts(assignRow.bank_id).line1}]
             </div>
             <div className="p-4 space-y-3">
-              <table className="table-grid w-full">
-                <tbody>
-                  <tr>
-                    <td className="w-40">Amount</td>
-                    <td>{formatAmount(assignRow.amount_gross)}</td>
-                  </tr>
-                  <tr>
-                    <td>Tgl Transaksi</td>
-                    <td>
-                      {new Date(assignRow.performed_at).toLocaleString(
-                        "id-ID",
-                        {
-                          timeZone: "Asia/Jakarta",
-                        }
-                      )}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs text-gray-500">Amount</div>
+                  <div className="font-semibold">{formatAmount(assignRow.amount_gross)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500">Tgl Transaksi (PDP dibuat)</div>
+                  <div className="font-semibold">
+                    {formatTglJakartaShort(assignRow.performed_at)}
+                  </div>
+                </div>
+              </div>
 
+              {/* Player */}
               <div>
-                <label className="block text-xs mb-1">Transaction Date</label>
+                <label className="block text-xs mb-1">Player</label>
+                <div className="relative">
+                  <input
+                    ref={playerInputRef}
+                    className="border rounded px-3 py-2 w-full"
+                    placeholder="search username"
+                    value={leadPicked ? (leadPicked.username ?? "") : leadQuery}
+                    onChange={(e) => {
+                      setLeadPicked(null);
+                      setLeadQuery(e.target.value);
+                    }}
+                    onKeyDown={(e) => {
+                      if (!leadPicked && leadOptions.length > 0) {
+                        if (e.key === "ArrowDown") {
+                          e.preventDefault();
+                          setLeadIndex((i) => Math.min(i + 1, leadOptions.length - 1));
+                          return;
+                        }
+                        if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          setLeadIndex((i) => Math.max(i - 1, 0));
+                          return;
+                        }
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          const pick = leadOptions[Math.max(0, leadIndex)];
+                          if (pick) {
+                            setLeadPicked(pick);
+                            setLeadOptions([]);
+                          }
+                          return;
+                        }
+                      }
+                    }}
+                  />
+                  {!leadPicked && leadOptions.length > 0 && (
+                    <div className="absolute z-10 mt-1 max-h-56 overflow-auto w-full border bg-white rounded shadow">
+                      {leadOptions.map((opt, idx) => (
+                        <div
+                          key={opt.id}
+                          onClick={() => {
+                            setLeadPicked(opt);
+                            setLeadOptions([]);
+                          }}
+                          className={`px-3 py-2 cursor-pointer text-sm hover:bg-gray-100 ${
+                            idx === leadIndex ? "bg-blue-50" : ""
+                          }`}
+                        >
+                          {opt.username} ({opt.bank ?? opt.bank_name} | {opt.name} | {opt.bank_no})
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Waktu dipilih saat ASSIGN */}
+              <div>
+                <label className="block text-xs mb-1">Transaction Date (dipilih)</label>
                 <input
                   type="datetime-local"
                   step="1"
@@ -508,83 +572,24 @@ export default function PendingDepositsTable() {
               </div>
 
               <div>
-                <label className="block text-xs mb-1">Player</label>
-                <div className="relative">
-                  <input
-                    ref={playerInputRef}
-                    className="border rounded px-3 py-2 w-full"
-                    placeholder="search username"
-                    value={
-                      assignLeadPicked
-                        ? assignLeadPicked.username ?? ""
-                        : assignLeadQuery
-                    }
-                    onChange={(e) => {
-                      setAssignLeadPicked(null);
-                      setAssignLeadQuery(e.target.value);
-                    }}
-                    onKeyDown={(e) => {
-                      if (!assignLeadPicked && assignLeadOpts.length > 0) {
-                        if (e.key === "ArrowDown") {
-                          e.preventDefault();
-                          setAssignLeadIndex((i) =>
-                            Math.min(i + 1, assignLeadOpts.length - 1)
-                          );
-                          return;
-                        }
-                        if (e.key === "ArrowUp") {
-                          e.preventDefault();
-                          setAssignLeadIndex((i) => Math.max(i - 1, 0));
-                          return;
-                        }
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          const pick =
-                            assignLeadOpts[Math.max(0, assignLeadIndex)];
-                          if (pick) {
-                            setAssignLeadPicked(pick);
-                            setAssignLeadOpts([]);
-                          }
-                          return;
-                        }
-                      }
-                    }}
-                  />
-                  {!assignLeadPicked && assignLeadOpts.length > 0 && (
-                    <div className="absolute z-10 mt-1 max-h-56 overflow-auto w-full border bg-white rounded shadow">
-                      {assignLeadOpts.map((opt, idx) => (
-                        <div
-                          key={opt.id}
-                          onClick={() => {
-                            setAssignLeadPicked(opt);
-                            setAssignLeadOpts([]);
-                          }}
-                          className={`px-3 py-2 cursor-pointer text-sm hover:bg-gray-100 ${
-                            idx === assignLeadIndex ? "bg-blue-50" : ""
-                          }`}
-                        >
-                          {opt.username} ({opt.bank ?? opt.bank_name} |{" "}
-                          {opt.name} | {opt.bank_no})
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <label className="block text-xs mb-1">Description</label>
+                <textarea
+                  rows={3}
+                  className="border rounded px-3 py-2 w-full"
+                  value={assignDesc}
+                  onChange={(e) => setAssignDesc(e.target.value)}
+                />
               </div>
             </div>
-
             <div className="border-t p-4 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={closeAssign}
+                onClick={() => setAssignOpen(false)}
                 className="rounded px-4 py-2 bg-gray-100"
               >
                 Close
               </button>
-              <button
-                type="submit"
-                className="rounded px-4 py-2 bg-blue-600 text-white"
-              >
+              <button type="submit" className="rounded px-4 py-2 bg-blue-600 text-white">
                 Submit
               </button>
             </div>
@@ -592,12 +597,12 @@ export default function PendingDepositsTable() {
         </div>
       )}
 
-      {/* ===== Modal: DELETE ===== */}
+      {/* ====== MODAL DELETE ====== */}
       {delOpen && delRow && (
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
           onMouseDown={(e) => {
-            if (e.currentTarget === e.target) closeDelete();
+            if (e.currentTarget === e.target) setDelOpen(false);
           }}
         >
           <form
@@ -607,18 +612,14 @@ export default function PendingDepositsTable() {
             }}
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
-            <div className="p-4 border-b font-semibold">
-              Konfirmasi delete deposit?
-            </div>
+            <div className="p-4 border-b font-semibold">Konfirmasi delete deposit?</div>
             <div className="p-4">
               <table className="table-grid w-full">
                 <tbody>
                   <tr>
-                    <td className="w-40">Bank Penerima</td>
+                    <td className="w-44">Bank Penerima</td>
                     <td>
-                      {banks[delRow.bank_id]
-                        ? `[${banks[delRow.bank_id].bank_code}] ${banks[delRow.bank_id].account_name} - ${banks[delRow.bank_id].account_no}`
-                        : "-"}
+                      {bankParts(delRow.bank_id).line1} — {bankParts(delRow.bank_id).no}
                     </td>
                   </tr>
                   <tr>
@@ -626,20 +627,13 @@ export default function PendingDepositsTable() {
                     <td>{formatAmount(delRow.amount_gross)}</td>
                   </tr>
                   <tr>
-                    <td>Tgl Transaksi</td>
-                    <td>
-                      {new Date(delRow.performed_at).toLocaleString("id-ID", {
-                        timeZone: "Asia/Jakarta",
-                      })}
-                    </td>
+                    <td>Tgl Transaksi (PDP dibuat)</td>
+                    <td>{formatTglJakartaShort(delRow.performed_at)}</td>
                   </tr>
                 </tbody>
               </table>
-
               <div className="mt-3">
-                <label className="block text-xs mb-1">
-                  Keterangan Penghapusan
-                </label>
+                <label className="block text-xs mb-1">Keterangan Penghapusan</label>
                 <input
                   className="border rounded px-3 py-2 w-full"
                   value={delNote}
@@ -650,15 +644,12 @@ export default function PendingDepositsTable() {
             <div className="border-t p-4 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={closeDelete}
+                onClick={() => setDelOpen(false)}
                 className="rounded px-4 py-2 bg-gray-100"
               >
                 Close
               </button>
-              <button
-                type="submit"
-                className="rounded px-4 py-2 bg-blue-600 text-white"
-              >
+              <button type="submit" className="rounded px-4 py-2 bg-red-600 text-white">
                 Submit
               </button>
             </div>
