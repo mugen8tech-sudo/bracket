@@ -15,19 +15,16 @@ function endOfDayJakartaISO(ymd: string) {
   return new Date(`${ymd}T23:59:59.999+07:00`).toISOString();
 }
 
-/** ===== Types (mengikuti skema SQL PDP yang kamu buat) ===== */
+/** ===== Types ===== */
 type PendingDeposit = {
   id: number;
   tenant_id: string;
   bank_id: number;
   amount_gross: number;
   description: string | null;
-  // waktu saat PDP dibuat (real/klik)
-  performed_at: string;
-  // status
+  performed_at: string; // waktu real (klik)
   is_assigned: boolean;
   is_deleted: boolean;
-  // jika sudah assign → referensi ke deposits
   assigned_deposit_id: number | null;
   assigned_at: string | null;
   assigned_by: string | null;
@@ -45,7 +42,14 @@ type DepositLite = {
   username: string | null;
 };
 
-type LeadLite = { id: number; username: string | null; name: string | null; bank: string | null; bank_name: string | null; bank_no: string | null; };
+type LeadLite = {
+  id: number;
+  username: string | null;
+  name: string | null;
+  bank: string | null;
+  bank_name: string | null;
+  bank_no: string | null;
+};
 
 /** ===== Komponen ===== */
 export default function PendingDepositsTable() {
@@ -57,7 +61,9 @@ export default function PendingDepositsTable() {
   // filters
   const [fStart, setFStart] = useState(todayJakartaYmd());
   const [fFinish, setFFinish] = useState(todayJakartaYmd());
-  const [fStatus, setFStatus] = useState<"ALL" | "NOT_ASSIGNED" | "ASSIGNED">("NOT_ASSIGNED");
+  const [fStatus, setFStatus] = useState<"ALL" | "NOT_ASSIGNED" | "ASSIGNED">(
+    "NOT_ASSIGNED"
+  );
 
   // data utama
   const [rows, setRows] = useState<PendingDeposit[]>([]);
@@ -118,7 +124,11 @@ export default function PendingDepositsTable() {
 
     // lookups: assigned deposit → username
     const depIds = Array.from(
-      new Set(list.map((r) => r.assigned_deposit_id).filter((v): v is number => !!v))
+      new Set(
+        list
+          .map((r) => r.assigned_deposit_id)
+          .filter((v): v is number => !!v)
+      )
     );
     if (depIds.length > 0) {
       const { data: deps } = await supabase
@@ -152,13 +162,15 @@ export default function PendingDepositsTable() {
   const [assignTxnAt, setAssignTxnAt] = useState<string>(() => {
     const d = new Date();
     const pad = (n: number) => n.toString().padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-      d.getHours()
-    )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
+      d.getDate()
+    )}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   });
   const [assignLeadQuery, setAssignLeadQuery] = useState("");
   const [assignLeadOpts, setAssignLeadOpts] = useState<LeadLite[]>([]);
-  const [assignLeadPicked, setAssignLeadPicked] = useState<LeadLite | null>(null);
+  const [assignLeadPicked, setAssignLeadPicked] = useState<LeadLite | null>(
+    null
+  );
   const [assignLeadIndex, setAssignLeadIndex] = useState(0);
   const playerInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -180,7 +192,7 @@ export default function PendingDepositsTable() {
   };
   const closeAssign = () => setAssignOpen(false);
 
-  // search player (meniru pola di DP/WD) :contentReference[oaicite:2]{index=2}
+  // search player (pola DP/WD)
   useEffect(() => {
     let active = true;
     (async () => {
@@ -193,7 +205,7 @@ export default function PendingDepositsTable() {
       const { data, error } = await supabase
         .from("leads")
         .select("id, username, name, bank, bank_name, bank_no")
-        .ilike("username", q) // sama seperti modal DP/WD
+        .ilike("username", `%${q}%`)
         .limit(10);
       if (!active) return;
       if (!error) setAssignLeadOpts((data as LeadLite[]) ?? []);
@@ -268,7 +280,9 @@ export default function PendingDepositsTable() {
 
   const statusCell = (r: PendingDeposit) => {
     if (r.is_assigned) {
-      const dep = r.assigned_deposit_id ? depositMap[r.assigned_deposit_id] : undefined;
+      const dep = r.assigned_deposit_id
+        ? depositMap[r.assigned_deposit_id]
+        : undefined;
       const username = dep?.username ?? "-";
       return (
         <>
@@ -295,14 +309,17 @@ export default function PendingDepositsTable() {
 
       <div className="overflow-auto rounded border bg-white">
         <form onSubmit={submitFilters}>
-          <table className="table-grid min-w-[1100px]" style={{ borderCollapse: "collapse" }}>
+          <table
+            className="table-grid min-w-[1100px]"
+            style={{ borderCollapse: "collapse" }}
+          >
             <thead>
-              {/* ===== Filter bar (sesuai screenshot) ===== */}
+              {/* ===== Filter bar ===== */}
               <tr className="filters">
                 <th className="w-20" />
-                <th className="w-[340px]" />
+                <th className="w-[360px]" />
                 <th className="w-32" />
-                <th className="w-40">
+                <th className="w-52">
                   <div className="flex flex-col gap-1">
                     <input
                       type="date"
@@ -318,34 +335,39 @@ export default function PendingDepositsTable() {
                     />
                   </div>
                 </th>
-                <th className="w-40">
+                <th className="w-[220px]">
                   <select
                     value={fStatus}
                     onChange={(e) =>
-                      setFStatus(e.target.value as "ALL" | "NOT_ASSIGNED" | "ASSIGNED")
+                      setFStatus(
+                        e.target.value as "ALL" | "NOT_ASSIGNED" | "ASSIGNED"
+                      )
                     }
-                    className="border rounded px-2 py-1 w-full max-w-[160px]"
+                    className="border rounded px-2 py-1 w-full max-w-[180px]"
                   >
                     <option value="ALL">ALL</option>
                     <option value="ASSIGNED">ASSIGNED</option>
                     <option value="NOT_ASSIGNED">NOT ASSIGNED</option>
                   </select>
                 </th>
-                <th className="w-30">
-                  <button type="submit" className="rounded bg-blue-600 text-white px-3 py-1">
+                <th className="w-[160px] text-right">
+                  <button
+                    type="submit"
+                    className="rounded bg-blue-600 text-white px-3 py-1"
+                  >
                     submit
                   </button>
                 </th>
               </tr>
 
-              {/* ===== Header kolom (persis urutan screenshot) ===== */}
+              {/* ===== Header kolom ===== */}
               <tr>
                 <th className="text-left w-20">ID</th>
-                <th className="text-left min-w-[340px]">Bank</th>
+                <th className="text-left min-w-[360px]">Bank</th>
                 <th className="text-left w-32">Amount</th>
-                <th className="text-left w-40">Tgl</th>
-                <th className="text-left w-40">Status</th>
-                <th className="text-left w-30">Action</th>
+                <th className="text-left w-52">Tgl</th>
+                <th className="text-left w-[220px]">Status</th>
+                <th className="text-left w-[160px]">Action</th>
               </tr>
             </thead>
 
@@ -361,22 +383,26 @@ export default function PendingDepositsTable() {
               ) : (
                 rows.map((r) => (
                   <tr key={r.id} className="align-top">
-                    <td>{r.id}</td>
-                    <td className="whitespace-normal break-words">
+                    <td className="py-1">{r.id}</td>
+                    <td className="whitespace-normal break-words py-1">
                       <div className="font-semibold">{bankLabel(r)}</div>
                       <div className="my-1 h-px bg-gray-200" />
                       <div className="text-sm text-gray-700">
                         {r.description ?? "-"}
                       </div>
                     </td>
-                    <td className="text-left">{formatAmount(r.amount_gross)}</td>
-                    <td>
+                    <td className="text-left py-1">
+                      {formatAmount(r.amount_gross)}
+                    </td>
+                    <td className="py-1 whitespace-nowrap">
                       {new Date(r.performed_at).toLocaleString("id-ID", {
                         timeZone: "Asia/Jakarta",
                       })}
                     </td>
-                    <td className="whitespace-normal break-words">{statusCell(r)}</td>
-                    <td className="space-x-2">
+                    <td className="whitespace-normal break-words py-1">
+                      {statusCell(r)}
+                    </td>
+                    <td className="space-x-2 py-1">
                       {!r.is_assigned && !r.is_deleted ? (
                         <>
                           <button
@@ -424,7 +450,10 @@ export default function PendingDepositsTable() {
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
             <div className="p-4 border-b font-semibold">
-              Deposit to {banks[assignRow.bank_id] ? `[${banks[assignRow.bank_id].bank_code}] ${banks[assignRow.bank_id].account_name} - ${banks[assignRow.bank_id].account_no}` : "-"}
+              Deposit to{" "}
+              {banks[assignRow.bank_id]
+                ? `[${banks[assignRow.bank_id].bank_code}] ${banks[assignRow.bank_id].account_name} - ${banks[assignRow.bank_id].account_no}`
+                : "-"}
             </div>
             <div className="p-4 space-y-3">
               <table className="table-grid w-full">
@@ -436,9 +465,12 @@ export default function PendingDepositsTable() {
                   <tr>
                     <td>Tgl Transaksi</td>
                     <td>
-                      {new Date(assignRow.performed_at).toLocaleString("id-ID", {
-                        timeZone: "Asia/Jakarta",
-                      })}
+                      {new Date(assignRow.performed_at).toLocaleString(
+                        "id-ID",
+                        {
+                          timeZone: "Asia/Jakarta",
+                        }
+                      )}
                     </td>
                   </tr>
                 </tbody>
@@ -462,7 +494,11 @@ export default function PendingDepositsTable() {
                     ref={playerInputRef}
                     className="border rounded px-3 py-2 w-full"
                     placeholder="search"
-                    value={assignLeadPicked ? assignLeadPicked.username ?? "" : assignLeadQuery}
+                    value={
+                      assignLeadPicked
+                        ? assignLeadPicked.username ?? ""
+                        : assignLeadQuery
+                    }
                     onChange={(e) => {
                       setAssignLeadPicked(null);
                       setAssignLeadQuery(e.target.value);
@@ -471,7 +507,9 @@ export default function PendingDepositsTable() {
                       if (!assignLeadPicked && assignLeadOpts.length > 0) {
                         if (e.key === "ArrowDown") {
                           e.preventDefault();
-                          setAssignLeadIndex((i) => Math.min(i + 1, assignLeadOpts.length - 1));
+                          setAssignLeadIndex((i) =>
+                            Math.min(i + 1, assignLeadOpts.length - 1)
+                          );
                           return;
                         }
                         if (e.key === "ArrowUp") {
@@ -481,7 +519,8 @@ export default function PendingDepositsTable() {
                         }
                         if (e.key === "Enter") {
                           e.preventDefault();
-                          const pick = assignLeadOpts[Math.max(0, assignLeadIndex)];
+                          const pick =
+                            assignLeadOpts[Math.max(0, assignLeadIndex)];
                           if (pick) {
                             setAssignLeadPicked(pick);
                             setAssignLeadOpts([]);
@@ -504,7 +543,8 @@ export default function PendingDepositsTable() {
                             idx === assignLeadIndex ? "bg-blue-50" : ""
                           }`}
                         >
-                          {opt.username} ({opt.bank ?? opt.bank_name} | {opt.name} | {opt.bank_no})
+                          {opt.username} ({opt.bank ?? opt.bank_name} |{" "}
+                          {opt.name} | {opt.bank_no})
                         </div>
                       ))}
                     </div>
@@ -521,7 +561,10 @@ export default function PendingDepositsTable() {
               >
                 Close
               </button>
-              <button type="submit" className="rounded px-4 py-2 bg-blue-600 text-white">
+              <button
+                type="submit"
+                className="rounded px-4 py-2 bg-blue-600 text-white"
+              >
                 Submit
               </button>
             </div>
@@ -574,7 +617,9 @@ export default function PendingDepositsTable() {
               </table>
 
               <div className="mt-3">
-                <label className="block text-xs mb-1">Keterangan Penghapusan</label>
+                <label className="block text-xs mb-1">
+                  Keterangan Penghapusan
+                </label>
                 <input
                   className="border rounded px-3 py-2 w-full"
                   value={delNote}
@@ -583,10 +628,17 @@ export default function PendingDepositsTable() {
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
-              <button type="button" onClick={closeDelete} className="rounded px-4 py-2 bg-gray-100">
+              <button
+                type="button"
+                onClick={closeDelete}
+                className="rounded px-4 py-2 bg-gray-100"
+              >
                 Close
               </button>
-              <button type="submit" className="rounded px-4 py-2 bg-blue-600 text-white">
+              <button
+                type="submit"
+                className="rounded px-4 py-2 bg-blue-600 text-white"
+              >
                 Submit
               </button>
             </div>
