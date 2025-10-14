@@ -192,13 +192,13 @@ export default function WithdrawalsTable() {
                   onChange={(e) => setFUser(e.target.value)}
                   className="w-full border rounded px-2 py-1" />
               </th>
+              <th></th>
               <th>
                 <div className="flex flex-col gap-1">
                   <input type="date" value={fStart} onChange={(e) => setFStart(e.target.value)} className="border rounded px-2 py-1" />
                   <input type="date" value={fFinish} onChange={(e) => setFFinish(e.target.value)} className="border rounded px-2 py-1" />
                 </div>
               </th>
-              <th></th>
               <th></th>
               <th>
                 <select value={fDeleted} onChange={(e) => setFDeleted(e.target.value as any)} className="border rounded px-2 py-1">
