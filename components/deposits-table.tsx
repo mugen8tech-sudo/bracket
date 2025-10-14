@@ -27,6 +27,7 @@ type DepositRow = {
 };
 
 const PAGE_SIZE = 50;
+const SUMMARY_BATCH = 1000; // batch agregasi summary filter
 
 function startOfDayJakartaISO(d: string) {
   return new Date(`${d}T00:00:00+07:00`).toISOString();
@@ -53,6 +54,12 @@ export default function DepositsTable() {
   const [sumToday, setSumToday] = useState<number>(0);
   const [countToday, setCountToday] = useState<number>(0);
   const [playersToday, setPlayersToday] = useState<number>(0);
+
+  // header summary untuk hasil filter (override saat Submit/Enter)
+  const [sumFiltered, setSumFiltered] = useState<number | null>(null);
+  const [countFiltered, setCountFiltered] = useState<number | null>(null);
+  const [playersFiltered, setPlayersFiltered] = useState<number | null>(null);
+  const [useFilteredSummary, setUseFilteredSummary] = useState(false);
 
   // list & pagination
   const [rows, setRows] = useState<DepositRow[]>([]);
@@ -190,7 +197,88 @@ export default function DepositsTable() {
   const applyFilters = (e?: React.FormEvent) => {
     e?.preventDefault();
     load(1); // filter berlaku saat Submit/Enter (bukan live)
+    loadFilteredSummary(); // update header summary mengikuti filter
   };
+
+  // ===== Summary mengikuti filter aktif (tanpa terpengaruh pagination) =====
+  const loadFilteredSummary = async () => {
+    // 1) Jika filter lead name diisi → cari ID lead dulu
+    let leadIds: number[] | null = null;
+    const leadName = fLead.trim();
+    if (leadName) {
+      const { data: leadList, error: eLead } = await supabase
+        .from("leads")
+        .select("id")
+        .ilike("name", `%${leadName}%`)
+        .limit(1000);
+      if (eLead) {
+        alert(eLead.message);
+        return;
+      }
+      leadIds = (leadList ?? []).map((x) => Number(x.id)).filter(Number.isFinite);
+      if (leadIds.length === 0) {
+        setSumFiltered(0);
+        setCountFiltered(0);
+        setPlayersFiltered(0);
+        setUseFilteredSummary(true);
+        return;
+      }
+    }
+
+    // 2) Hitung total baris yang match filter
+    let qCount = supabase.from("deposits").select("id", { count: "exact", head: true });
+    if (leadIds) qCount = qCount.in("lead_id", leadIds);
+    if (fUser.trim()) qCount = qCount.ilike("username", `%${fUser.trim()}%`);
+    if (fStart) qCount = qCount.gte("txn_at", startOfDayJakartaISO(fStart));
+    if (fFinish) qCount = qCount.lte("txn_at", endOfDayJakartaISO(fFinish));
+    if (fDeleted === "YES") qCount = qCount.eq("status", "reversed");
+    if (fDeleted === "NO") qCount = qCount.eq("status", "posted");
+
+    const { count: totalMatched, error: eCount } = await qCount;
+    if (eCount) {
+      alert(eCount.message);
+      return;
+    }
+    if (!totalMatched) {
+      setSumFiltered(0);
+      setCountFiltered(0);
+      setPlayersFiltered(0);
+      setUseFilteredSummary(true);
+      return;
+    }
+
+    // 3) Ambil data per-batch lalu agregasi (sum & distinct player)
+    let from = 0;
+    let sum = 0;
+    const players = new Set<string>();
+    while (from < totalMatched) {
+      const to = Math.min(from + SUMMARY_BATCH - 1, totalMatched - 1);
+      let q = supabase
+        .from("deposits")
+        .select("amount_net, username")
+        .order("txn_at", { ascending: false })
+        .range(from, to);
+      if (leadIds) q = q.in("lead_id", leadIds);
+      if (fUser.trim()) q = q.ilike("username", `%${fUser.trim()}%`);
+      if (fStart) q = q.gte("txn_at", startOfDayJakartaISO(fStart));
+      if (fFinish) q = q.lte("txn_at", endOfDayJakartaISO(fFinish));
+      if (fDeleted === "YES") q = q.eq("status", "reversed");
+      if (fDeleted === "NO") q = q.eq("status", "posted");
+      const { data, error } = await q;
+      if (error) {
+        alert(error.message);
+        return;
+      }
+      const list = ((data ?? []) as { amount_net: number; username: string }[]) || [];
+      sum += list.reduce((a, b) => a + Number(b.amount_net || 0), 0);
+      list.forEach((x) => players.add(x.username));
+      from += SUMMARY_BATCH;
+    }
+    setSumFiltered(sum);
+    setCountFiltered(totalMatched);
+    setPlayersFiltered(players.size);
+    setUseFilteredSummary(true);
+  }
 
   // ===== Delete (Reverse) modal =====
   const [delOpen, setDelOpen] = useState(false);
@@ -250,7 +338,12 @@ export default function DepositsTable() {
     }
     setDelOpen(false);
     await load(page);
-    await loadToday();
+    // refresh summary sesuai mode (hari ini vs filter)
+    if (useFilteredSummary) {
+      await loadFilteredSummary();
+    } else {
+      await loadToday();
+    }
   };
 
   const canPrev = page > 1;
@@ -258,10 +351,13 @@ export default function DepositsTable() {
 
   return (
     <div className="space-y-3">
-      {/* Header summary hari ini */}
+      {/* Header summary */}
       <div className="rounded border bg-white p-3 text-sm">
-        <b>Deposits</b> | {formatAmount(sumToday)} | {countToday} transaction |{" "}
-        {playersToday} player
+        <b>Deposits</b>
+        {useFilteredSummary && <span className="ml-1 text-gray-500">(filtered)</span>}{" "}
+        | {formatAmount(useFilteredSummary ? (sumFiltered ?? 0) : sumToday)} |{" "}
+        {useFilteredSummary ? (countFiltered ?? 0) : countToday} transaction |{" "}
+        {useFilteredSummary ? (playersFiltered ?? 0) : playersToday} player
       </div>
 
       <div className="overflow-auto rounded border bg-white">
