@@ -8,7 +8,7 @@ import { formatAmount } from "@/lib/format";
 type MutationKind =
   | "DEPOSIT" | "REVERSAL_DEPOSIT"
   | "WITHDRAWAL" | "REVERSAL_WITHDRAWAL"
-  | "PENDING_DEPOSIT"
+  | "PENDING_DEPOSIT" | "REVERSAL_PENDING_DEPOSIT"
   | "INTERBANK_OUT" | "INTERBANK_IN"
   | "ADJUSTMENT"
   | "EXPENSE";
@@ -53,7 +53,7 @@ function kindsForCat(cat: CatKey): MutationKind[] | "EXPENSE_TRANSFER" | "ALL" {
   switch (cat) {
     case "DEPO":       return ["DEPOSIT", "REVERSAL_DEPOSIT"];
     case "WD":         return ["WITHDRAWAL", "REVERSAL_WITHDRAWAL"];
-    case "PENDING_DP": return ["PENDING_DEPOSIT"];
+    case "PENDING_DP": return ["PENDING_DEPOSIT", "REVERSAL_PENDING_DEPOSIT"];
     case "SESAMA_CM":  return ["INTERBANK_OUT", "INTERBANK_IN"];
     case "ADJ":        return ["ADJUSTMENT"];
     case "EXPENSE":    return ["EXPENSE"];          // nanti dipilah: BUKAN transfer fee
@@ -87,6 +87,33 @@ function isTransferFee(desc?: string | null) {
   );
 }
 
+// dd/mm/yyyy hh.mm.ss (Asia/Jakarta)
+function formatIdDateTime(d: string | Date | null | undefined) {
+  if (!d) return "-";
+  const dt = typeof d === "string" ? new Date(d) : d;
+  const date = dt.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" });
+  const time = dt.toLocaleTimeString("id-ID", { hour12: false, timeZone: "Asia/Jakarta" }).replace(/:/g, ".");
+  return `${date} ${time}`;
+}
+
+// Parse timestamp PDP-YYYY-MM-DD HH:mm:ss dari description → Date (WIB)
+function parsePdpTimestamp(desc?: string | null): Date | null {
+  if (!desc) return null;
+  const m = desc.match(/PDP-([0-9]{4})-([0-9]{2})-([0-9]{2})\s+([0-9]{2}):([0-9]{2}):([0-9]{2})/i);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m;
+  return new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}+07:00`);
+}
+
+// Ekstrak alasan penghapusan: setelah "|" atau setelah "Alasan:" / "Reason:"
+function extractDeletionReason(desc?: string | null) {
+  if (!desc) return "";
+  const pipe = desc.split("|");
+  if (pipe.length > 1) return pipe.slice(1).join("|").trim();
+  const m = desc.match(/(?:alasan|reason)\s*:\s*(.+)$/i);
+  return m ? m[1].trim() : "";
+}
+
 /** ================= Komponen ================= **/
 export default function BankMutationsTable() {
   const supabase = supabaseBrowser();
@@ -104,6 +131,9 @@ export default function BankMutationsTable() {
   const [withdrawalMap, setWithdrawalMap] = useState<Record<number, WithdrawalLite>>({});
   const [leadMap, setLeadMap] = useState<Record<number, LeadLite>>({});
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({});
+
+  // mapping waktu PDP asal untuk REVERSAL_PENDING_DEPOSIT (dibangun dari data halaman)
+  const [revPdpTimeMap, setRevPdpTimeMap] = useState<Record<number, string | null>>({});
 
   // filters
   const [fId, setFId] = useState("");
@@ -243,6 +273,32 @@ export default function BankMutationsTable() {
       list = ordered;
     }
 
+    // === Pairing waktu PDP asal untuk REVERSAL_PENDING_DEPOSIT (berdasarkan data di halaman)
+    const pdpRows = list.filter(r => r.kind === "PENDING_DEPOSIT");
+    const revPdpRows = list.filter(r => r.kind === "REVERSAL_PENDING_DEPOSIT");
+    const pdpBuckets = new Map<string, BankMutationRow[]>();
+    for (const p of pdpRows) {
+      const key = `${p.bank_id}|${Math.abs(p.amount)}`;
+      const arr = pdpBuckets.get(key) || [];
+      arr.push(p);
+      pdpBuckets.set(key, arr);
+    }
+    for (const arr of pdpBuckets.values()) {
+      arr.sort((a, b) => new Date(a.performed_at).getTime() - new Date(b.performed_at).getTime());
+    }
+    const tmpRevMap: Record<number, string | null> = {};
+    for (const rv of revPdpRows) {
+      const key = `${rv.bank_id}|${Math.abs(rv.amount)}`;
+      const arr = pdpBuckets.get(key) || [];
+      const rvTime = new Date(rv.performed_at).getTime();
+      let picked: BankMutationRow | undefined;
+      for (let i = arr.length - 1; i >= 0; i--) {
+        if (new Date(arr[i].performed_at).getTime() <= rvTime) { picked = arr[i]; break; }
+      }
+      tmpRevMap[rv.id] = picked?.performed_at ?? null;
+    }
+    setRevPdpTimeMap(tmpRevMap);
+
     setRows(list);
     setTotal(count ?? list.length);
     setPage(pageToLoad);
@@ -294,7 +350,7 @@ export default function BankMutationsTable() {
   const catLabelForRow = (r: BankMutationRow): string => {
     if (r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") return "Depo";
     if (r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") return "WD";
-    if (r.kind === "PENDING_DEPOSIT") return "Pending DP";
+    if (r.kind === "PENDING_DEPOSIT" || r.kind === "REVERSAL_PENDING_DEPOSIT") return "Pending DP";
     if (r.kind === "INTERBANK_OUT" || r.kind === "INTERBANK_IN") return "Sesama CM";
     if (r.kind === "ADJUSTMENT") return "Adjustment";
     if (r.kind === "EXPENSE") {
@@ -324,6 +380,9 @@ export default function BankMutationsTable() {
       const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
       const leadName = w?.lead_id ? (leadMap[w.lead_id!]?.name ?? "") : "";
       return `Reversal WD dari ${w?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
+    }
+    if (r.kind === "REVERSAL_PENDING_DEPOSIT") {
+      return "Reversal Pending DP";
     }
     if (r.kind === "EXPENSE" && isTransferFee(r.description)) {
       const s = (r.description || "").toLowerCase();
@@ -357,21 +416,34 @@ export default function BankMutationsTable() {
         : "-";
       return `[REVERSAL-${madeAt}]`;
     }
+    if (r.kind === "REVERSAL_PENDING_DEPOSIT") {
+      const madeAt = revPdpTimeMap[r.id]
+        ? new Date(revPdpTimeMap[r.id] as string).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
+        : "-";
+      return `[REVERSAL-${madeAt}]`;
+    }
     return null;
   };
 
-  // Tag khusus PDP (sama konsepnya seperti REVERSAL), muncul di baris judul bank
+  // Tag khusus PDP (muncul di baris DEPOSIT hasil assign PDP) → format dd/mm/yyyy hh.mm.ss
   const pdpTag = (r: BankMutationRow) => {
-    // PDP tag hanya relevan untuk baris DEPOSIT hasil assign PDP
     if (r.kind !== "DEPOSIT") return null;
-    const s = (r.description || "").toUpperCase();
-    // SQL assign menuliskan "PDP-<waktu_buat_PDP>" ke description
-    // Contoh: "... | PDP-2025-10-13 23:15:32"
-    const m = s.match(/PDP-([0-9:\-\s]+)/i);
-    if (!m) return null;
-    return `[PDP-${m[1]}]`;
+    const d = parsePdpTimestamp(r.description);
+    if (!d) return null;
+    return `[PDP-${formatIdDateTime(d)}]`;
   };
 
+  // Desc cell rules:
+  // - DEPOSIT hasil assign PDP → kosong (info PDP sudah di tag)
+  // - REVERSAL_PENDING_DEPOSIT → kosong kecuali ada alasan penghapusan
+  // - lainnya → description apa adanya
+  const descForRow = (r: BankMutationRow, pdpTagStr: string | null) => {
+    if (r.kind === "DEPOSIT" && pdpTagStr) return "";
+    if (r.kind === "REVERSAL_PENDING_DEPOSIT") {
+      return extractDeletionReason(r.description);
+    }
+    return r.description ?? "";
+  };
 
   const totalPagesTxt = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -495,7 +567,10 @@ export default function BankMutationsTable() {
             ) : (
               rows.map((r) => {
                 const creator = (r.created_by && creatorMap[r.created_by]) || r.created_by || "-";
-                const tag = reversalTag(r) ?? pdpTag(r);
+                const revTag = reversalTag(r);
+                const pdpTagStr = pdpTag(r);
+                const tag = revTag ?? pdpTagStr;
+                const descCell = descForRow(r, pdpTagStr);
                 return (
                   <tr key={r.id} className="align-top">
                     <td>{r.id}</td>
@@ -510,7 +585,7 @@ export default function BankMutationsTable() {
                       <div className="my-1 h-px bg-gray-200" />
                       <div className="text-sm text-gray-700">{extraInfo(r)}</div>
                     </td>
-                    <td className="whitespace-normal break-words">{r.description ?? ""}</td>
+                    <td className="whitespace-normal break-words">{descCell}</td>
                     <td className="text-right">{formatAmount(r.amount)}</td>
                     <td className="text-right">{formatAmount(r.balance_before)}</td>
                     <td className="text-right">{formatAmount(r.balance_after)}</td>
