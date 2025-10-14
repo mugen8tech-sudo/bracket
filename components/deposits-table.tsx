@@ -204,13 +204,14 @@ export default function DepositsTable() {
   // ===== Summary mengikuti filter aktif (tanpa terpengaruh pagination) =====
   const loadFilteredSummary = async () => {
     // 1) Jika filter lead name diisi → cari ID lead dulu
+    const user = fUser.trim();
     let leadIds: number[] | null = null;
     const leadName = fLead.trim();
     if (leadName) {
       const { data: leadList, error: eLead } = await supabase
         .from("leads")
         .select("id")
-        .ilike("name", `%${leadName}%`)
+        .ilike("name", leadName)
         .limit(1000);
       if (eLead) {
         alert(eLead.message);
@@ -229,11 +230,11 @@ export default function DepositsTable() {
     // 2) Hitung total baris yang match filter
     let qCount = supabase.from("deposits").select("id", { count: "exact", head: true });
     if (leadIds) qCount = qCount.in("lead_id", leadIds);
-    if (fUser.trim()) qCount = qCount.ilike("username", `%${fUser.trim()}%`);
+    if (user) qCount = qCount.ilike("username", user); // EXACT (tanpa wildcard)
     if (fStart) qCount = qCount.gte("txn_at", startOfDayJakartaISO(fStart));
     if (fFinish) qCount = qCount.lte("txn_at", endOfDayJakartaISO(fFinish));
     if (fDeleted === "YES") qCount = qCount.eq("status", "reversed");
-    if (fDeleted === "NO") qCount = qCount.eq("status", "posted");
+    else if (fDeleted === "NO") qCount = qCount.eq("status", "posted");
 
     const { count: totalMatched, error: eCount } = await qCount;
     if (eCount) {
@@ -260,11 +261,11 @@ export default function DepositsTable() {
         .order("txn_at", { ascending: false })
         .range(from, to);
       if (leadIds) q = q.in("lead_id", leadIds);
-      if (fUser.trim()) q = q.ilike("username", `%${fUser.trim()}%`);
+      if (user) q = q.ilike("username", user); // EXACT (tanpa wildcard)
       if (fStart) q = q.gte("txn_at", startOfDayJakartaISO(fStart));
       if (fFinish) q = q.lte("txn_at", endOfDayJakartaISO(fFinish));
       if (fDeleted === "YES") q = q.eq("status", "reversed");
-      if (fDeleted === "NO") q = q.eq("status", "posted");
+      else if (fDeleted === "NO") q = q.eq("status", "posted");
       const { data, error } = await q;
       if (error) {
         alert(error.message);
@@ -272,7 +273,8 @@ export default function DepositsTable() {
       }
       const list = ((data ?? []) as { amount_net: number; username: string }[]) || [];
       sum += list.reduce((a, b) => a + Number(b.amount_net || 0), 0);
-      list.forEach((x) => players.add(x.username));
+      // normalisasi agar 'Tester' dan 'tester' dianggap 1 pemain
+      list.forEach((x) => players.add((x.username ?? "").trim().toLowerCase()));
       from += SUMMARY_BATCH;
     }
     setSumFiltered(sum);
