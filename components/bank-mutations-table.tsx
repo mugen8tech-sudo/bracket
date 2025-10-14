@@ -360,6 +360,19 @@ export default function BankMutationsTable() {
     return null;
   };
 
+  // Tag khusus PDP (sama konsepnya seperti REVERSAL), muncul di baris judul bank
+  const pdpTag = (r: BankMutationRow) => {
+    // PDP tag hanya relevan untuk baris DEPOSIT hasil assign PDP
+    if (r.kind !== "DEPOSIT") return null;
+    const s = (r.description || "").toUpperCase();
+    // SQL assign menuliskan "PDP-<waktu_buat_PDP>" ke description
+    // Contoh: "... | PDP-2025-10-13 23:15:32"
+    const m = s.match(/PDP-([0-9:\-\s]+)/i);
+    if (!m) return null;
+    return `[PDP-${m[1]}]`;
+  };
+
+
   const totalPagesTxt = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
@@ -482,7 +495,7 @@ export default function BankMutationsTable() {
             ) : (
               rows.map((r) => {
                 const creator = (r.created_by && creatorMap[r.created_by]) || r.created_by || "-";
-                const tag = reversalTag(r);
+                const tag = reversalTag(r) ?? pdpTag(r);
                 return (
                   <tr key={r.id} className="align-top">
                     <td>{r.id}</td>
