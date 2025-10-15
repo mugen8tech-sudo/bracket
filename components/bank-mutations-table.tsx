@@ -334,6 +334,66 @@ export default function BankMutationsTable() {
       );
     }
 
+    // === ⬇️ Tambahan: penataan grup TT (OUT → Fee → IN ketika ascending) ===
+    // Ambil semua ID mutasi di halaman
+    const idsOnPage = list.map(r => r.id);
+    // Cari interbank_transfers yang mereferensikan salah satu ID tsb
+    let ttRows: { id: number; mutation_out_id: number; mutation_in_id: number; mutation_fee_id: number | null }[] = [];
+    if (idsOnPage.length) {
+      const [qOut, qIn] = await Promise.all([
+        supabase.from("interbank_transfers")
+          .select("id, mutation_out_id, mutation_in_id, mutation_fee_id")
+          .in("mutation_out_id", idsOnPage),
+        supabase.from("interbank_transfers")
+          .select("id, mutation_out_id, mutation_in_id, mutation_fee_id")
+          .in("mutation_in_id", idsOnPage),
+      ]);
+      ttRows = [
+        ...((qOut.data as any[]) ?? []),
+        ...((qIn.data as any[]) ?? []),
+      ];
+      // de‑dupe by id
+      const seen = new Set<number>();
+      ttRows = ttRows.filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+    }
+
+    if (ttRows.length) {
+      // peta: mutation_id -> { group info }
+      const byMutId = new Map<number, { outId: number; inId: number; feeId: number | null }>();
+      for (const t of ttRows) {
+        byMutId.set(t.mutation_out_id, { outId: t.mutation_out_id, inId: t.mutation_in_id, feeId: t.mutation_fee_id ?? null });
+        byMutId.set(t.mutation_in_id,  { outId: t.mutation_out_id, inId: t.mutation_in_id, feeId: t.mutation_fee_id ?? null });
+        if (t.mutation_fee_id) byMutId.set(t.mutation_fee_id, { outId: t.mutation_out_id, inId: t.mutation_in_id, feeId: t.mutation_fee_id });
+      }
+
+      // index cepat id -> row
+      const rowById = new Map<number, BankMutationRow>(list.map(r => [r.id, r]));
+      const used = new Set<number>();
+      const ordered: BankMutationRow[] = [];
+
+      // Dengan urut default DESC (performed_at, id), kita jaga konsistensi global:
+      // tampilkan IN → (Fee) → OUT. Saat user melihat urut ASC, hasilnya otomatis OUT → Fee → IN.
+      for (const r of list) {
+        if (used.has(r.id)) continue;
+
+        const grp = byMutId.get(r.id);
+        if (!grp) {
+          ordered.push(r);
+          used.add(r.id);
+          continue;
+        }
+
+        // urut DESC: IN, Fee(optional), OUT
+        const ids = [grp.inId, grp.feeId ?? undefined, grp.outId].filter(Boolean) as number[];
+        for (const id of ids) {
+          const it = rowById.get(id);
+          if (it && !used.has(id)) { ordered.push(it); used.add(id); }
+        }
+      }
+
+      list = ordered;
+    }
+
     setRows(list);
     setTotal(count ?? list.length);
     setPage(pageToLoad);
