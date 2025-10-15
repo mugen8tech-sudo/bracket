@@ -1,24 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
-/** ================= Helpers (ikut pola Banks) ================= **/
+/** ==== helpers ==== */
 const PAGE_SIZE = 50;
 
-// Normalisasi minus (−, –, —) → '-'
-function normalizeMinus(raw: string) {
-  return raw.replace(/\u2212|\u2013|\u2014/g, "-");
-}
-// Grouping angka (absolut)
+function normalizeMinus(raw: string) { return raw.replace(/\u2212|\u2013|\u2014/g, "-"); }
 function formatWithGroupingLive(raw: string) {
   let cleaned = raw.replace(/,/g, "").replace(/[^\d.]/g, "");
   const firstDot = cleaned.indexOf(".");
-  if (firstDot !== -1) {
-    cleaned =
-      cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
-  }
+  if (firstDot !== -1) cleaned = cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
   let [intPart = "0", fracPartRaw] = cleaned.split(".");
   intPart = intPart.replace(/^0+(?=\d)/, "");
   if (intPart === "") intPart = "0";
@@ -29,7 +22,6 @@ function formatWithGroupingLive(raw: string) {
   }
   return intGrouped;
 }
-// Boleh minus di depan/akhir ("100000-" valid)
 function formatWithGroupingLiveSigned(raw: string) {
   let s = normalizeMinus(raw.trim());
   const isNeg = s.startsWith("-") || s.endsWith("-");
@@ -50,37 +42,24 @@ function toNumberSigned(input: string) {
   const n = toNumber(s);
   return isNeg ? -n : n;
 }
-// default: now (local) → value untuk <input type="datetime-local">
 function nowLocalDatetimeValue() {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours()
-  )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
+function todayJakartaYmd() { return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" }); }
+function startOfDayJakartaISO(ymd: string) { return new Date(`${ymd}T00:00:00+07:00`).toISOString(); }
+function endOfDayJakartaISO(ymd: string) { return new Date(`${ymd}T23:59:59.999+07:00`).toISOString(); }
 
-function todayJakartaYmd() {
-  // yyyy-mm-dd in Asia/Jakarta (untuk filter default hari ini)
-  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
-}
-function startOfDayJakartaISO(ymd: string) {
-  return new Date(`${ymd}T00:00:00+07:00`).toISOString();
-}
-function endOfDayJakartaISO(ymd: string) {
-  return new Date(`${ymd}T23:59:59.999+07:00`).toISOString();
-}
-
-/** ================= Types ================= **/
+/** ==== types ==== */
 type Row = {
   id: number;
   amount: number;
   description: string | null;
   is_bonus: boolean | null;
-  txn_at: string;        // waktu dipilih (backdate)
-  performed_at: string;  // waktu klik (real)
+  txn_at: string;
+  performed_at: string;
   created_by: string | null;
-  credit_before: number;
-  credit_after: number;
 };
 
 type Creator = { user_id: string; full_name: string | null };
@@ -88,13 +67,13 @@ type Creator = { user_id: string; full_name: string | null };
 export default function CreditAdjustment() {
   const supabase = supabaseBrowser();
 
-  // header saldo & tenant
+  // tenant & balance
   const [tenantId, setTenantId] = useState<string>("");
   const [tenantName, setTenantName] = useState<string>("");
   const [tenantCredit, setTenantCredit] = useState<number>(0);
 
-  // filter
-  const [fBonus, setFBonus] = useState<"ALL" | "BONUS" | "NON_BONUS">("ALL");
+  // filters
+  const [fIsBonus, setFIsBonus] = useState<"ALL" | "true" | "false">("ALL");
   const [fStart, setFStart] = useState<string>(todayJakartaYmd());
   const [fFinish, setFFinish] = useState<string>(todayJakartaYmd());
 
@@ -108,56 +87,43 @@ export default function CreditAdjustment() {
   // join creator names
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({});
 
-  // modal
+  // modal state
   const [showNew, setShowNew] = useState(false);
   const [amountStr, setAmountStr] = useState("0.00");
   const [txnAt, setTxnAt] = useState(nowLocalDatetimeValue());
   const [desc, setDesc] = useState("");
   const [isBonus, setIsBonus] = useState(true);
-
   const amountRef = useRef<HTMLInputElement | null>(null);
 
-  /** --------- bootstrap tenant & saldo --------- **/
+  /** bootstrap tenant */
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data: prof } = await supabase
-        .from("profiles")
-        .select("tenant_id")
-        .eq("user_id", user.id)
-        .single();
+      const { data: prof } = await supabase.from("profiles").select("tenant_id").eq("user_id", user.id).single();
       if (!prof?.tenant_id) return;
-
       setTenantId(prof.tenant_id);
 
-      const { data: tenant } = await supabase
-        .from("tenants")
-        .select("name, credit_balance")
-        .eq("id", prof.tenant_id)
-        .single();
-
+      const { data: tenant } = await supabase.from("tenants").select("name, credit_balance").eq("id", prof.tenant_id).single();
       setTenantName(tenant?.name ?? "");
       setTenantCredit(tenant?.credit_balance ?? 0);
     })();
   }, [supabase]);
 
-  /** --------- query builder --------- **/
+  /** query */
   const buildQuery = () => {
     let q = supabase
       .from("credit_mutations")
-      .select(
-        "id, amount, description, is_bonus, txn_at, performed_at, created_by, credit_before, credit_after",
-        { count: "exact" }
-      )
+      .select("id, amount, description, is_bonus, txn_at, performed_at, created_by", { count: "exact" })
       .eq("kind", "ADJUSTMENT_CREDIT")
-      .order("performed_at", { ascending: false });
+      .order("performed_at", { ascending: false }); // filter tanggal berdasarkan Submitted
 
-    if (fStart) q = q.gte("txn_at", startOfDayJakartaISO(fStart));
-    if (fFinish) q = q.lte("txn_at", endOfDayJakartaISO(fFinish));
+    // tanggal di atas kolom Submitted → gunakan performed_at
+    if (fStart) q = q.gte("performed_at", startOfDayJakartaISO(fStart));
+    if (fFinish) q = q.lte("performed_at", endOfDayJakartaISO(fFinish));
 
-    if (fBonus === "BONUS") q = q.eq("is_bonus", true);
-    if (fBonus === "NON_BONUS") q = q.eq("is_bonus", false);
+    if (fIsBonus === "true") q = q.eq("is_bonus", true);
+    if (fIsBonus === "false") q = q.eq("is_bonus", false);
 
     return q;
   };
@@ -168,24 +134,17 @@ export default function CreditAdjustment() {
     const to = from + PAGE_SIZE - 1;
 
     const { data, error, count } = await buildQuery().range(from, to);
-    if (error) {
-      setLoading(false);
-      alert(error.message);
-      return;
-    }
+    if (error) { setLoading(false); alert(error.message); return; }
 
     const list = (data as Row[]) ?? [];
     setRows(list);
     setTotal(count ?? 0);
     setPage(pageToLoad);
 
-    // join creator names
+    // join profiles (creator)
     const ids = Array.from(new Set(list.map((r) => r.created_by).filter(Boolean))) as string[];
     if (ids.length > 0) {
-      const { data: profs } = await supabase
-        .from("profiles")
-        .select("user_id, full_name")
-        .in("user_id", ids);
+      const { data: profs } = await supabase.from("profiles").select("user_id, full_name").in("user_id", ids);
       const m: Record<string, string> = {};
       for (const p of (profs as Creator[] | null) ?? []) m[p.user_id] = p.full_name || p.user_id;
       setCreatorMap(m);
@@ -196,113 +155,49 @@ export default function CreditAdjustment() {
     setLoading(false);
   };
 
-  useEffect(() => { load(1); /* default: hari ini */ }, /* eslint-disable-line */ []);
+  useEffect(() => { load(1); /* default hari ini */ }, /* eslint-disable-line */ []);
 
   const canPrev = page > 1;
   const canNext = page < totalPages;
 
-  /** --------- submit new adjustment --------- **/
+  /** submit new */
   const submitNew = async () => {
     const delta = toNumberSigned(amountStr);
-    if (delta === 0) {
-      alert("Amount tidak boleh 0.");
-      amountRef.current?.focus();
-      return;
-    }
+    if (delta === 0) { alert("Amount tidak boleh 0."); amountRef.current?.focus(); return; }
 
     const { error } = await supabase.rpc("perform_credit_adjustment", {
-      p_amount_delta: delta,                         // +/- (langsung mempengaruhi credit)
-      p_is_bonus: isBonus,                           // default true
-      p_txn_at_final: new Date(txnAt).toISOString(),// waktu transaksi (backdate)
+      p_amount_delta: delta,
+      p_txn_at_final: new Date(txnAt).toISOString(),
+      p_is_bonus: isBonus,
       p_description: desc || null,
     });
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
+    if (error) { alert(error.message); return; }
 
     setShowNew(false);
     setAmountStr("0.00"); setTxnAt(nowLocalDatetimeValue()); setDesc(""); setIsBonus(true);
 
-    // refresh saldo + tabel
-    const { data: tenant } = await supabase
-      .from("tenants")
-      .select("credit_balance")
-      .eq("id", tenantId)
-      .single();
+    const { data: tenant } = await supabase.from("tenants").select("credit_balance").eq("id", tenantId).single();
     setTenantCredit(tenant?.credit_balance ?? tenantCredit);
     await load(1);
   };
 
-  const applyFilters: React.FormEventHandler = (e) => {
-    e.preventDefault();
-    load(1);
-  };
+  const applyFilters: React.FormEventHandler = (e) => { e.preventDefault(); load(1); };
 
   return (
     <div className="space-y-3">
-      {/* Header saldo */}
+      {/* header saldo */}
       <div className="rounded border bg-white p-3 text-sm">
         <b>Credit Adjustments — {tenantName || "TECH"}</b>
         <span className="ml-2">| Credit: {formatAmount(tenantCredit)}</span>
       </div>
 
-      {/* Tabel + filter bar */}
       <div className="overflow-auto rounded border bg-white">
         <form onSubmit={applyFilters}>
           <table className="table-grid min-w-[1100px]" style={{ borderCollapse: "collapse" }}>
             <thead>
-              <tr className="filters">
-                <th className="w-32">
-                  <select
-                    value={fBonus}
-                    onChange={(e) => setFBonus(e.target.value as any)}
-                    className="border rounded px-2 py-1 w-full"
-                  >
-                    <option value="ALL">All</option>
-                    <option value="BONUS">Bonus Only</option>
-                    <option value="NON_BONUS">Non-Bonus</option>
-                  </select>
-                </th>
-                <th className="w-40">
-                  <input
-                    type="date"
-                    value={fStart}
-                    onChange={(e) => setFStart(e.target.value)}
-                    className="border rounded px-2 py-1 w-full"
-                    aria-label="Start (txn_at)"
-                  />
-                </th>
-                <th className="w-40">
-                  <input
-                    type="date"
-                    value={fFinish}
-                    onChange={(e) => setFFinish(e.target.value)}
-                    className="border rounded px-2 py-1 w-full"
-                    aria-label="Finish (txn_at)"
-                  />
-                </th>
-                <th />
-                <th />
-                <th />
-                <th />
-                <th className="text-right">
-                  <button className="rounded bg-blue-600 text-white px-3 py-1">
-                    submit
-                  </button>
-                </th>
-              </tr>
-
+              {/* row tombol New di atas tombol submit (pojok kanan atas) */}
               <tr>
-                <th className="text-left w-20">ID</th>
-                <th className="text-left w-28">Amount</th>
-                <th className="text-left min-w-[260px]">Description</th>
-                <th className="text-left w-20">Is Bonus</th>
-                <th className="text-left w-42">Tgl</th>
-                <th className="text-left w-42">Submitted</th>
-                <th className="text-left w-36">By</th>
-                <th className="text-right w-36 pr-3">
+                <th colSpan={7} className="text-right p-2">
                   <button
                     type="button"
                     onClick={() => {
@@ -319,13 +214,65 @@ export default function CreditAdjustment() {
                   </button>
                 </th>
               </tr>
+
+              {/* filter bar */}
+              <tr className="filters">
+                <th /> {/* ID */}
+                <th /> {/* Amount */}
+                <th /> {/* Description */}
+                <th className="w-28">
+                  <select
+                    value={fIsBonus}
+                    onChange={(e) => setFIsBonus(e.target.value as any)}
+                    className="border rounded px-2 py-1 w-full"
+                    aria-label="Is Bonus"
+                  >
+                    <option value="ALL">All</option>
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
+                </th>
+                <th /> {/* Tgl */}
+                <th className="w-40">
+                  <div className="flex flex-col gap-1">
+                    <input
+                      type="date"
+                      value={fStart}
+                      onChange={(e) => setFStart(e.target.value)}
+                      className="border rounded px-2 py-1 w-full"
+                      aria-label="Submitted Start"
+                    />
+                    <input
+                      type="date"
+                      value={fFinish}
+                      onChange={(e) => setFFinish(e.target.value)}
+                      className="border rounded px-2 py-1 w-full"
+                      aria-label="Submitted Finish"
+                    />
+                  </div>
+                </th>
+                <th className="text-right pr-3">
+                  <button className="rounded bg-blue-600 text-white px-3 py-1">submit</button>
+                </th>
+              </tr>
+
+              {/* header kolom */}
+              <tr>
+                <th className="text-left w-20">ID</th>
+                <th className="text-left w-28">Amount</th>
+                <th className="text-left min-w-[260px]">Description</th>
+                <th className="text-left w-20">Is Bonus</th>
+                <th className="text-left w-42">Tgl</th>
+                <th className="text-left w-42">Submitted</th>
+                <th className="text-left w-36">By</th>
+              </tr>
             </thead>
 
             <tbody>
               {loading ? (
-                <tr><td colSpan={8}>Loading…</td></tr>
+                <tr><td colSpan={7}>Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={8}>No data</td></tr>
+                <tr><td colSpan={7}>No data</td></tr>
               ) : (
                 rows.map((r) => (
                   <tr key={r.id}>
@@ -333,19 +280,9 @@ export default function CreditAdjustment() {
                     <td>{formatAmount(r.amount)}</td>
                     <td className="whitespace-normal break-words">{r.description ?? "-"}</td>
                     <td>{String(!!r.is_bonus)}</td>
-                    <td>
-                      {new Date(r.txn_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}
-                    </td>
-                    <td>
-                      {new Date(r.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}
-                    </td>
+                    <td>{new Date(r.txn_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
+                    <td>{new Date(r.performed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
                     <td>{r.created_by ? (creatorMap[r.created_by] ?? r.created_by) : "-"}</td>
-                    <td className="text-right">
-                      <div className="text-xs">
-                        start: {formatAmount(r.credit_before)}<br/>
-                        finish: {formatAmount(r.credit_after)}
-                      </div>
-                    </td>
                   </tr>
                 ))
               )}
@@ -354,30 +291,7 @@ export default function CreditAdjustment() {
         </form>
       </div>
 
-      {/* Pagination */}
-      <div className="flex justify-center">
-        <nav className="inline-flex items-center gap-1 text-sm select-none">
-          <button
-            onClick={() => canPrev && load(1)}
-            disabled={!canPrev}
-            className="px-3 py-1 rounded border bg-white disabled:opacity-50">First</button>
-          <button
-            onClick={() => canPrev && load(page - 1)}
-            disabled={!canPrev}
-            className="px-3 py-1 rounded border bg-white disabled:opacity-50">Previous</button>
-          <span className="px-3 py-1 rounded border bg-white">Page {page} / {totalPages}</span>
-          <button
-            onClick={() => canNext && load(page + 1)}
-            disabled={!canNext}
-            className="px-3 py-1 rounded border bg-white disabled:opacity-50">Next</button>
-          <button
-            onClick={() => canNext && load(totalPages)}
-            disabled={!canNext}
-            className="px-3 py-1 rounded border bg-white disabled:opacity-50">Last</button>
-        </nav>
-      </div>
-
-      {/* Modal New Credit Adjustment (adopsi gaya Banks → Adj) */}
+      {/* Modal New Credit Adjustment */}
       {showNew && (
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
@@ -399,47 +313,24 @@ export default function CreditAdjustment() {
                   onChange={(e)=>{
                     const f = formatWithGroupingLiveSigned(e.target.value);
                     setAmountStr(f);
-                    setTimeout(() => {
-                      const el = amountRef.current; if (el) { const L = el.value.length; el.setSelectionRange(L, L); }
-                    }, 0);
+                    setTimeout(() => { const el = amountRef.current; if (el) { const L = el.value.length; el.setSelectionRange(L, L); } }, 0);
                   }}
                   onBlur={()=>{
                     const n = toNumberSigned(amountStr);
-                    setAmountStr(
-                      new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
-                    );
+                    setAmountStr(new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n));
                   }}
                 />
               </div>
-
               <div>
                 <label className="block text-xs mb-1">Transaction Date</label>
-                <input
-                  type="datetime-local"
-                  step="1"
-                  className="border rounded px-3 py-2 w-full"
-                  value={txnAt}
-                  onChange={(e)=>setTxnAt(e.target.value)}
-                />
+                <input type="datetime-local" step="1" className="border rounded px-3 py-2 w-full" value={txnAt} onChange={(e)=>setTxnAt(e.target.value)} />
               </div>
-
               <div>
                 <label className="block text-xs mb-1">Description</label>
-                <textarea
-                  rows={3}
-                  className="border rounded px-3 py-2 w-full"
-                  value={desc}
-                  onChange={(e)=>setDesc(e.target.value)}
-                />
+                <textarea rows={3} className="border rounded px-3 py-2 w-full" value={desc} onChange={(e)=>setDesc(e.target.value)} />
               </div>
-
               <div className="flex items-center gap-2">
-                <input
-                  id="is_bonus"
-                  type="checkbox"
-                  checked={isBonus}
-                  onChange={(e)=>setIsBonus(e.target.checked)}
-                />
+                <input id="is_bonus" type="checkbox" checked={isBonus} onChange={(e)=>setIsBonus(e.target.checked)} />
                 <label htmlFor="is_bonus">Bonus?</label>
               </div>
             </div>
