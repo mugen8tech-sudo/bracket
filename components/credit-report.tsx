@@ -32,8 +32,8 @@ export default function CreditReport() {
   const [finish, setFinish] = useState<string>(endOfTodayLocal());
   const [loading, setLoading] = useState<boolean>(false);
   const [r, setR] = useState<ReportRow | null>(null);
+  const [tenantName, setTenantName] = useState<string>("");
 
-  // ambil tenant_id seperti pola di BanksTable
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -42,7 +42,18 @@ export default function CreditReport() {
         .select("tenant_id")
         .eq("user_id", user?.id)
         .single();
-      setTenantId(prof?.tenant_id ?? "");
+
+      const tid = prof?.tenant_id ?? "";
+      setTenantId(tid);
+
+      if (tid) {
+        const { data: tenant } = await supabase
+          .from("tenants")
+          .select("name")
+          .eq("id", tid)
+          .single();
+        setTenantName(tenant?.name ?? "");
+      }
     })();
   }, [supabase]);
 
@@ -67,7 +78,7 @@ export default function CreditReport() {
 
   return (
     <div className="space-y-3">
-      <div className="text-lg font-semibold">Credit Reports — TECH</div>
+      <div className="text-lg font-semibold">Credit Reports — {tenantName}</div>
       <div className="overflow-auto rounded border bg-white">
         <div className="p-3 border-b flex items-center gap-2">
           <div className="flex items-center gap-2">
