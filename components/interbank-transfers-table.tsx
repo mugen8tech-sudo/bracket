@@ -162,7 +162,7 @@ export default function InterbankTransfersTable() {
                   <td>{fmtIdDateTime(r.submitted_at)}</td>
                   <td>{profilesMap[r.created_by] ?? r.created_by}</td>
                   <td>
-                    <Link href={`/interbank_transfer/${r.id}`} className="rounded bg-gray-100 px-3 py-1 inline-block">
+                    <Link href={`/interbank_transfers/${r.id}`} className="rounded bg-gray-100 px-3 py-1 inline-block">
                       Detail
                     </Link>
                   </td>
