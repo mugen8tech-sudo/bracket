@@ -11,7 +11,8 @@ type MutationKind =
   | "PENDING_DEPOSIT" | "REVERSAL_PENDING_DEPOSIT"
   | "INTERBANK_OUT" | "INTERBANK_IN"
   | "ADJUSTMENT"
-  | "EXPENSE";
+  | "EXPENSE"         // transfer fee (legacy)
+  | "BANK_EXPENSE";   // expense operasional (baru)
 
 type BankMutationRow = {
   id: number;
@@ -56,8 +57,8 @@ function kindsForCat(cat: CatKey): MutationKind[] | "EXPENSE_TRANSFER" | "ALL" {
     case "PENDING_DP": return ["PENDING_DEPOSIT", "REVERSAL_PENDING_DEPOSIT", "REVERSAL_DEPOSIT"]; // ambil dulu, nanti pasca-filter
     case "SESAMA_CM":  return ["INTERBANK_OUT", "INTERBANK_IN"];
     case "ADJ":        return ["ADJUSTMENT"];
-    case "EXPENSE":    return ["EXPENSE"];          // nanti dipilah: BUKAN transfer fee
-    case "TRANSFER_FEE": return "EXPENSE_TRANSFER"; // hanya fee
+    case "EXPENSE":       return ["BANK_EXPENSE"];     // Expense operasional
+    case "TRANSFER_FEE":  return "EXPENSE_TRANSFER";   // HANYA fee (EXPENSE)
     default:           return "ALL";
   }
 }
@@ -155,6 +156,7 @@ export default function BankMutationsTable() {
   const [leadMap, setLeadMap] = useState<Record<number, LeadLite>>({});
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({});
   const [ttDescMap, setTtDescMap] = useState<Record<number, string>>({});
+  const [expDescMap, setExpDescMap] = useState<Record<number, string>>({});
 
   // mapping waktu PDP asal untuk reversal PDP (id reversal -> performed_at PDP asal)
   const [revPdpTimeMap, setRevPdpTimeMap] = useState<Record<number, string>>({});
@@ -441,6 +443,22 @@ export default function BankMutationsTable() {
       setTtDescMap({});
     }
 
+    // === Deskripsi khusus BANK_EXPENSE ===
+    const beIds = list.filter(r => r.kind === "BANK_EXPENSE").map(r => r.id);
+    if (beIds.length) {
+      const { data } = await supabase
+        .from("bank_expenses")
+        .select("mutation_id, description")
+        .in("mutation_id", beIds);
+      const map: Record<number, string> = {};
+      for (const it of (data as any[] ?? [])) {
+        if (it.mutation_id) map[it.mutation_id] = it.description ?? "";
+      }
+      setExpDescMap(map);
+    } else {
+      setExpDescMap({});
+    }
+
     setRows(list);
     setTotal(count ?? list.length);
     setPage(pageToLoad);
@@ -497,7 +515,8 @@ export default function BankMutationsTable() {
     if (r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") return "WD";
     if (r.kind === "INTERBANK_OUT" || r.kind === "INTERBANK_IN") return "Sesama CM";
     if (r.kind === "ADJUSTMENT") return "Adjustment";
-    if (r.kind === "EXPENSE") return isTransferFee(r.description) ? "Biaya Transaksi" : "Expense";
+    if (r.kind === "BANK_EXPENSE") return "Expense";
+    if (r.kind === "EXPENSE") {return isTransferFee(r.description) ? "Biaya Transaksi" : "Expense";}
     if (r.kind === "PENDING_DEPOSIT" || isReversalOfPDP(r)) return "Pending DP";
     if (r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") return "Depo";
     return "-";
@@ -726,6 +745,7 @@ export default function BankMutationsTable() {
                         r.kind === "INTERBANK_IN"  ||
                         (r.kind === "EXPENSE" && isTtFee(r.description)))
                         ? (ttDescMap[r.id] ?? "")
+                        {r.kind === "BANK_EXPENSE" ? (expDescMap[r.id] ?? "") : (r.description ?? "")}
                         : descCell}
                     </td>
                     <td className="text-right">{formatAmount(r.amount)}</td>
