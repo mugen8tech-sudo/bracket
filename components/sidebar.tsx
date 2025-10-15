@@ -19,7 +19,7 @@ export default function Sidebar() {
       const tid = prof?.tenant_id ?? "";
       setTenantId(tid);
       if (tid) {
-        const { data: t } = await supabase.from("tenants").select("name, credit_balance").eq("id", tid).single();
+        const { data: t } = await supabase.from("tenants").select("name").eq("id", tid).single();
         setTenantName(t?.name ?? "");
       }
     })();
