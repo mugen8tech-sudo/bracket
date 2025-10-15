@@ -17,7 +17,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const supabase = supabaseBrowser();
 
-  const [brand, setBrand] = useState<string>("TECH");     // header kiri
+  const [brand, setBrand] = useState<string>;     // header kiri
   const [role, setRole] = useState<"admin" | "cs" | "viewer" | "other">("other");
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -33,8 +33,6 @@ export default function Sidebar() {
         .select("role, tenant_id")
         .eq("user_id", user.id)
         .single();
-
-      setRole(normalizeRole(prof?.role));
 
       if (prof?.tenant_id) {
         // Ambil slug atau name untuk header brand
