@@ -41,7 +41,7 @@ export default function Sidebar() {
     { label: "Credit Adjustment", href: "credit_adjustments", enabled: true },
     { label: "Credit Mutation", href: "/credit_mutations", enabled: true },
     { label: "Credit Report", href: "credit_reports", enabled: true },
-    { label: "User Management", href: "#", enabled: false },
+    { label: "User Management", href: "/users", enabled: true },
   ];
 
   return (
