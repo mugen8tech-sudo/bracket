@@ -726,7 +726,7 @@ export default function BankMutationsTable() {
                         r.kind === "INTERBANK_IN"  ||
                         (r.kind === "EXPENSE" && isTtFee(r.description)))
                         ? (ttDescMap[r.id] ?? "")
-                        : descCell1}
+                        : descCell}
                     </td>
                     <td className="text-right">{formatAmount(r.amount)}</td>
                     <td className="text-right">{formatAmount(r.balance_before)}</td>
