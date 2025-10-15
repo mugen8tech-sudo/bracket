@@ -197,7 +197,7 @@ export default function CreditAdjustment() {
     <div className="space-y-3">
       {/* header saldo */}
       <div className="rounded border bg-white p-3 text-sm">
-        <b>Credit Adjustments — {tenantName || "TECH"}</b>
+        <b>Credit Adjustments — {tenantName}</b>
         <span className="ml-2">| Credit: {formatAmount(tenantCredit)}</span>
       </div>
 
@@ -311,7 +311,7 @@ export default function CreditAdjustment() {
             onSubmit={(e) => { e.preventDefault(); submitNew(); }}
             className="bg-white rounded border w-full max-w-xl mt-10"
           >
-            <div className="p-4 border-b font-semibold">New Credit Adjustment — {tenantName || "TECH"}</div>
+            <div className="p-4 border-b font-semibold">New Credit Adjustment — {tenantName}</div>
             <div className="p-4 space-y-3">
               <div>
                 <label className="block text-xs mb-1">Amount (+/−)</label>
