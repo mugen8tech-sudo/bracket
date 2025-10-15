@@ -312,7 +312,7 @@ export default function BanksTable() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [showNew, showDP, showWD, showPDP, showTT, showAdj, showSetting, closeNew, closeDP, closeWD, closePDP, closeTT, closeAdj]);
+  }, [showNew, showDP, showWD, showPDP, showTT, showAdj, showExpense, showSetting, closeNew, closeDP, closeWD, closePDP, closeTT, closeAdj, closeExpense]);
 
   // Listener event (kompatibel dengan tombol existing yang dispatch "open-bank-new")
   useEffect(() => {
