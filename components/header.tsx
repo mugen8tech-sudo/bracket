@@ -18,8 +18,7 @@ export default async function Header() {
     <header className="w-full border-b bg-white">
       <div className="px-4 h-14 flex items-center justify-between">
         <div className="font-semibold">
-          Bracket BANK —{" "}
-          <span className="text-sm text-gray-500">TECH</span>
+          Bracket BANK
         </div>
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-700">{fullName}</span>
