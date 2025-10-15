@@ -743,10 +743,12 @@ export default function BankMutationsTable() {
                     <td className="whitespace-normal break-words">
                       {(r.kind === "INTERBANK_OUT" ||
                         r.kind === "INTERBANK_IN"  ||
-                        (r.kind === "EXPENSE" && isTtFee(r.description)))
-                        ? (ttDescMap[r.id] ?? "")
-                        {r.kind === "BANK_EXPENSE" ? (expDescMap[r.id] ?? "") : (r.description ?? "")}
-                        : descCell}
+                        (r.kind === "EXPENSE" && isTransferFee(r.description))) // ← pakai helper yang ada
+                        ? (ttDescMap[r.id] ?? "")                                // desc TT (input user)
+                        : (r.kind === "BANK_EXPENSE"
+                            ? (expDescMap[r.id] ?? "")                           // desc Expense (input user)
+                            : (r.description ?? ""))                             // default
+                      }
                     </td>
                     <td className="text-right">{formatAmount(r.amount)}</td>
                     <td className="text-right">{formatAmount(r.balance_before)}</td>
