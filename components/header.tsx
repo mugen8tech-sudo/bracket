@@ -1,5 +1,7 @@
-import { supabaseServer } from "@/lib/supabase-server";
+"use client";
+
 import { useEffect, useRef, useState } from "react";
+import { supabaseServer } from "@/lib/supabase-server";
 
 export default async function Header() {
   const supabase = supabaseServer();
