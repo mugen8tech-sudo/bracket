@@ -1,5 +1,4 @@
 import { supabaseServer } from "@/lib/supabase-server";
-import { getTenantBrand } from "@/lib/get-tenant-brand";
 
 export default async function Header() {
   const supabase = supabaseServer();
