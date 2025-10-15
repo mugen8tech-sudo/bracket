@@ -23,6 +23,19 @@ type ProfileLite = { user_id: string; full_name: string | null };
 
 const PAGE_SIZE = 50;
 
+// di atas file (atau impor dari lib)
+const EXPENSE_CATEGORY_CODES = [
+  "AIR","BELI REKENING","BONUS CRM","BONUS CS","BONUS MEMBER",
+  "BONUS PLAYER","BONUS SPV","BONUS TELE","DATABASE","DOMAIN & HOSTING",
+  "ENTERTAINMENT","GAJI CS","GAJI CS WA BLAST","GAJI DESIGN","GAJI FINANCE",
+  "GAJI HEAD CS","GAJI HEAD WA BLAST","GAJI OB","GAJI PAID ADS","GAJI SEO",
+  "GAJI SPV","GAJI SPV CRM","GAJI TELE","IKLAN","INTERNET","INTERNET SEHAT (NAWALA)",
+  "IP FEE","KEAMANAN","KEBERSIHAN","KESEHATAN","KOORDINASI","LAIN-LAIN","LAUNDRY",
+  "LISTRIK","LIVECHAT","MAINTENANCE","MAKAN","PANTRY","PAYPAL","PERALATAN","PERLENGKAPAN",
+  "PULSA","RENOVASI FURNITURE & ELECTRONIC","RENOVASI SIPIL","SEO","SETUP FEE (APK)",
+  "SEWA","SKYPE","SMS BLAST","THR","TICKET & TRANSPORTASI","MAINTENANCE FEE","OTHER EXPENSE","MISTAKE CS"
+];
+
 function startOfDayJakartaISO(d: string) {
   return new Date(`${d}T00:00:00+07:00`).toISOString();
 }
@@ -57,7 +70,7 @@ export default function BankExpensesTable() {
   const [fCat, setFCat] = useState<string>("ALL");
 
   // optional: muat distinct kategori untuk filter
-  const [catOptions, setCatOptions] = useState<string[]>([]);
+  const [catOptions, setCatOptions] = useState<string[]>(EXPENSE_CATEGORY_CODES);
 
   const load = async (pageToLoad = page) => {
     setLoading(true);
@@ -84,7 +97,7 @@ export default function BankExpensesTable() {
     const bankIds = Array.from(new Set(list.map(r => r.bank_id)));
     const userIds = Array.from(new Set(list.map(r => r.created_by)));
 
-    const [bankRes, profRes, catRes] = await Promise.all([
+    const [bankRes, profRes] = await Promise.all([
       bankIds.length
         ? supabase.from("banks").select("id, bank_code, account_name, account_no").in("id", bankIds)
         : Promise.resolve({ data: [] as any[] }),
@@ -97,9 +110,6 @@ export default function BankExpensesTable() {
 
     setBanks(Object.fromEntries(((bankRes.data as BankLite[]) ?? []).map(b => [b.id, b])));
     setProfiles(Object.fromEntries(((profRes.data as ProfileLite[]) ?? []).map(p => [p.user_id, p.full_name ?? p.user_id])));
-
-    const cats = Array.from(new Set(((catRes.data as any[]) ?? []).map((x) => x.category_code))).filter(Boolean);
-    setCatOptions(cats);
 
     setRows(list);
     setTotal(count ?? list.length);
