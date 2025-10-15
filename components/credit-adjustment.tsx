@@ -110,6 +110,16 @@ export default function CreditAdjustment() {
     })();
   }, [supabase]);
 
+  // ESC → close New Credit Adjustment (meniru pola Banks)
+  useEffect(() => {
+    if (!showNew) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowNew(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [showNew]);
+
   /** query */
   const buildQuery = () => {
     let q = supabase
