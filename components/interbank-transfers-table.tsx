@@ -123,20 +123,42 @@ export default function InterbankTransfersTable() {
         <table className="table-grid min-w-[1100px]" style={{ borderCollapse: "collapse" }}>
           <thead>
             <tr className="filters">
-              <th className="w-40">
-                <input type="date" value={fStart} onChange={(e)=>setFStart(e.target.value)}
-                       className="border rounded px-2 py-1 w-full" placeholder=", dd --- yyyy" />
+              {/* ID */}           <th className="w-16" />
+              {/* Bank Asal */}    <th className="w-[320px]" />
+              {/* Bank Tujuan */}  <th className="w-[320px]" />
+              {/* Amount */}       <th className="w-36" />
+              {/* Tgl (dua input di-stack) */}
+              <th className="w-56">
+                <div className="flex flex-col gap-1">
+                  <input
+                    type="date"
+                    value={fStart}
+                    onChange={(e)=>setFStart(e.target.value)}
+                    className="border rounded px-2 py-1 w-full"
+                    placeholder=", dd --- yyyy"
+                  />
+                  <input
+                    type="date"
+                    value={fFinish}
+                    onChange={(e)=>setFFinish(e.target.value)}
+                    className="border rounded px-2 py-1 w-full"
+                    placeholder=", dd --- yyyy"
+                  />
+                </div>
               </th>
-              <th className="w-40">
-                <input type="date" value={fFinish} onChange={(e)=>setFFinish(e.target.value)}
-                       className="border rounded px-2 py-1 w-full" placeholder=", dd --- yyyy" />
-              </th>
+              {/* By */}          <th className="w-40" />
+              {/* Action (Submit tepat di sini) */}
               <th className="w-24">
-                <button onClick={()=>load(1)} className="rounded bg-blue-600 text-white px-3 py-1">
+                <button
+                  onClick={()=>load(1)}
+                  className="rounded bg-blue-600 text-white px-3 py-1 w-full"
+                >
                   Submit
                 </button>
               </th>
             </tr>
+
+            {/* HEADER */}
             <tr>
               <th className="text-left w-16">ID</th>
               <th className="text-left w-[320px]">Bank Asal</th>
