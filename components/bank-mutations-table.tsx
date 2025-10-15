@@ -72,6 +72,11 @@ function todayJakartaYMD() {
 }
 
 // deteksi EXPENSE yang merupakan biaya transfer (WD/TT)
+function isTtFee(desc?: string | null) {
+  if (!desc) return false;
+  const s = desc.toLowerCase();
+  return s.includes("tt fee") || s.includes("interbank fee");
+}
 function isTransferFee(desc?: string | null) {
   if (!desc) return false;
   const s = desc.toLowerCase();
@@ -149,6 +154,7 @@ export default function BankMutationsTable() {
   const [withdrawalMap, setWithdrawalMap] = useState<Record<number, WithdrawalLite>>({});
   const [leadMap, setLeadMap] = useState<Record<number, LeadLite>>({});
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({});
+  const [ttDescMap, setTtDescMap] = useState<Record<number, string>>({});
 
   // mapping waktu PDP asal untuk reversal PDP (id reversal -> performed_at PDP asal)
   const [revPdpTimeMap, setRevPdpTimeMap] = useState<Record<number, string>>({});
@@ -392,6 +398,47 @@ export default function BankMutationsTable() {
       }
 
       list = ordered;
+    }
+
+    // === Ambil deskripsi TT yang dimasukkan user (untuk kolom Desc)
+    const ttOutIds = list.filter(r => r.kind === "INTERBANK_OUT").map(r => r.id);
+    const ttInIds  = list.filter(r => r.kind === "INTERBANK_IN").map(r => r.id);
+    const ttFeeIds = list
+      .filter(r => r.kind === "EXPENSE" && isTtFee(r.description))
+      .map(r => r.id);
+
+    if (ttOutIds.length + ttInIds.length + ttFeeIds.length > 0) {
+      const [qOut, qIn, qFee] = await Promise.all([
+        ttOutIds.length
+          ? supabase.from("interbank_transfers")
+              .select("mutation_out_id, description")
+              .in("mutation_out_id", ttOutIds)
+          : Promise.resolve({ data: [] as any[] }),
+        ttInIds.length
+          ? supabase.from("interbank_transfers")
+              .select("mutation_in_id, description")
+              .in("mutation_in_id", ttInIds)
+          : Promise.resolve({ data: [] as any[] }),
+        ttFeeIds.length
+          ? supabase.from("interbank_transfers")
+              .select("mutation_fee_id, description")
+              .in("mutation_fee_id", ttFeeIds)
+          : Promise.resolve({ data: [] as any[] }),
+      ]);
+
+      const map: Record<number, string> = {};
+      for (const r of ((qOut.data as any[]) ?? [])) {
+        if (r.mutation_out_id) map[r.mutation_out_id] = r.description ?? "";
+      }
+      for (const r of ((qIn.data as any[]) ?? [])) {
+        if (r.mutation_in_id) map[r.mutation_in_id] = r.description ?? "";
+      }
+      for (const r of ((qFee.data as any[]) ?? [])) {
+        if (r.mutation_fee_id) map[r.mutation_fee_id] = r.description ?? "";
+      }
+      setTtDescMap(map);
+    } else {
+      setTtDescMap({});
     }
 
     setRows(list);
@@ -674,7 +721,13 @@ export default function BankMutationsTable() {
                       <div className="my-1 h-px bg-gray-200" />
                       <div className="text-sm text-gray-700">{extraInfo(r)}</div>
                     </td>
-                    <td className="whitespace-normal break-words">{descCell}</td>
+                    <td className="whitespace-normal break-words">
+                      {(r.kind === "INTERBANK_OUT" ||
+                        r.kind === "INTERBANK_IN"  ||
+                        (r.kind === "EXPENSE" && isTtFee(r.description)))
+                        ? (ttDescMap[r.id] ?? "")
+                        : descCell1}
+                    </td>
                     <td className="text-right">{formatAmount(r.amount)}</td>
                     <td className="text-right">{formatAmount(r.balance_before)}</td>
                     <td className="text-right">{formatAmount(r.balance_after)}</td>
