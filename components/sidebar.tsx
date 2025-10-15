@@ -1,11 +1,29 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+import { supabaseBrowser } from "@/lib/supabase-browser";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const supabase = supabaseBrowser();
+  const [tenantName, setTenantName] = useState<string>("");
+  // bootstrap tenant info
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: prof } = await supabase.from("profiles").select("tenant_id").eq("user_id", user?.id).single();
+      const tid = prof?.tenant_id ?? "";
+      setTenantId(tid);
+      if (tid) {
+        const { data: t } = await supabase.from("tenants").select("name, credit_balance").eq("id", tid).single();
+        setTenantName(t?.name ?? "");
+        setTenantCredit(t?.credit_balance ?? 0);
+      }
+    })();
+  }, [supabase]);
 
   // Daftar menu (aktifkan path nyata saat halaman siap)
   const items: { label: string; href: string; enabled?: boolean }[] = [
@@ -28,7 +46,7 @@ export default function Sidebar() {
 
   return (
     <aside className="w-[220px] shrink-0 border-r bg-white min-h-[calc(100vh-56px)]">
-      <div className="px-3 py-3 font-semibold">TECH</div>
+      <div className="px-3 py-3 font-semibold">{tenantName}</div>
       <nav className="px-2 pb-6">
         <ul className="space-y-1">
           {items.map((it) => {
