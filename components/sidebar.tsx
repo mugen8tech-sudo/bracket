@@ -14,7 +14,7 @@ export default function Sidebar() {
     { label: "Deposits", href: "/deposits", enabled: true },
     { label: "Withdrawals", href: "/withdrawals", enabled: true },
     { label: "Pending Deposits", href: "/pending_deposits", enabled: true },
-    { label: "Interbank Transfer", href: "#", enabled: false },
+    { label: "Interbank Transfer", href: "/interbank_transfers", enabled: true },
     { label: "Bank Adjustment", href: "#", enabled: false },
     { label: "Expenses", href: "#", enabled: false },
     { label: "Bank Mutation", href: "/bank_mutations", enabled: true },
