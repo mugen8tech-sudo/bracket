@@ -1,4 +1,5 @@
 import { supabaseServer } from "@/lib/supabase-server";
+import { getTenantBrand } from "@/lib/get-tenant-brand";
 
 export default async function Header() {
   const supabase = supabaseServer();
@@ -14,11 +15,14 @@ export default async function Header() {
     fullName = data?.full_name ?? user.email ?? "User";
   }
 
+  const tenantBrand = await getTenantBrand();
+
   return (
     <header className="w-full border-b bg-white">
       <div className="px-4 h-14 flex items-center justify-between">
         <div className="font-semibold">
-          Bracket BANK — <span className="text-sm text-gray-500">TECH</span>
+          Bracket BANK —{" "}
+          <span className="text-sm text-gray-500">{tenantBrand}</span>
         </div>
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-700">{fullName}</span>
