@@ -21,7 +21,6 @@ export default function Sidebar() {
       if (tid) {
         const { data: t } = await supabase.from("tenants").select("name, credit_balance").eq("id", tid).single();
         setTenantName(t?.name ?? "");
-        setTenantCredit(t?.credit_balance ?? 0);
       }
     })();
   }, [supabase]);
