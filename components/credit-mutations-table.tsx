@@ -19,12 +19,12 @@ function endOfDayJakartaISO(ymd: string) {
 }
 
 // Map enum 'kind' -> bucket Cat (DP/WD/ADJ/TOPUP)
-function catFromKind(kind: string | null | undefined): "DP" | "WD" | "ADJ" | "TOPUP" | "-" {
+function catFromKind(kind: string | null | undefined): "DP" | "WD" | "Adjustment" | "Topup" | "-" {
   const k = (kind ?? "").toUpperCase();
   if (k === "DEPOSIT" || k === "REVERSAL_DEPOSIT") return "DP";
   if (k === "WITHDRAWAL" || k === "REVERSAL_WITHDRAWAL") return "WD";
-  if (k === "CREDIT_ADJUSTMENT") return "ADJ";     // untuk ke depan
-  if (k === "CREDIT_TOPUP") return "TOPUP";        // untuk ke depan
+  if (k === "ADJUSTMENT_CREDIT") return "Adjustment";     // untuk ke depan
+  if (k === "CREDIT_TOPUP") return "Topup";        // untuk ke depan
   return "-";
 }
 function kindsForCat(cat: "ALL" | "DP" | "WD" | "ADJ" | "TOPUP") {
@@ -34,7 +34,7 @@ function kindsForCat(cat: "ALL" | "DP" | "WD" | "ADJ" | "TOPUP") {
     case "WD":
       return ["WITHDRAWAL", "REVERSAL_WITHDRAWAL", "withdrawal", "reversal_withdrawal"];
     case "ADJ":
-      return ["CREDIT_ADJUSTMENT", "credit_adjustment"];
+      return ["ADJUSTMENT_CREDIT", "adjustment_credit"];
     case "TOPUP":
       return ["CREDIT_TOPUP", "credit_topup"];
     default:
