@@ -10,6 +10,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const supabase = supabaseBrowser();
   const [tenantName, setTenantName] = useState<string>("");
+  const [tenantId, setTenantId] = useState<string>("");
   // bootstrap tenant info
   useEffect(() => {
     (async () => {
