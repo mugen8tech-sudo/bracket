@@ -4,6 +4,25 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
+function useSubmitGuard() {
+  const lockRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const run = async <T,>(fn: () => Promise<T> | T) => {
+    if (lockRef.current) return;     // sudah terkunci → abaikan submit berikutnya
+    lockRef.current = true;
+    setSubmitting(true);
+    try {
+      return await fn();
+    } finally {
+      setSubmitting(false);
+      lockRef.current = false;
+    }
+  };
+
+  return { submitting, run };
+}
+
 /* ========= Helpers ========= */
 const PAGE_SIZE = 25;
 
@@ -91,6 +110,10 @@ export default function PendingDepositsTable() {
 
   // data master
   const [banks, setBanks] = useState<BankLite[]>([]);
+
+  // submit guard
+  const assignGuard = useSubmitGuard();
+  const delGuard = useSubmitGuard();
 
   // tabel
   const [rows, setRows] = useState<PendingDeposit[]>([]);
@@ -202,13 +225,14 @@ export default function PendingDepositsTable() {
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (assignGuard.submitting || delGuard.submitting) { e.preventDefault(); return; }
         if (assignOpen) setAssignOpen(false);
         if (delOpen) setDelOpen(false);
       }
     };
     if (assignOpen || delOpen) window.addEventListener("keydown", onEsc);
     return () => window.removeEventListener("keydown", onEsc);
-  }, [assignOpen, delOpen]);
+  }, [assignOpen, delOpen, assignGuard.submitting, delGuard.submitting]);
 
   useEffect(() => {
     let active = true;
@@ -494,14 +518,13 @@ export default function PendingDepositsTable() {
         <div
           className="fixed inset-0 bg-black/60 flex items-start justify-center p-4"
           onMouseDown={(e) => {
+            if (assignGuard.submitting) return;                     // ← kunci overlay saat submit
             if (e.currentTarget === e.target) setAssignOpen(false); // klik overlay
           }}
         >
           <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitAssign();
-            }}
+            onSubmit={(e) => { e.preventDefault(); assignGuard.run(submitAssign); }}  // ← kunci submit 1×
+            onKeyDown={(e) => { if (assignGuard.submitting && e.key === "Enter") e.preventDefault(); }}  // blok Enter saat submit
             className="bg-white rounded border w-full max-w-lg mt-14"
           >
             <div className="p-4 border-b font-semibold">
@@ -602,11 +625,18 @@ export default function PendingDepositsTable() {
                 type="button"
                 onClick={() => setAssignOpen(false)}
                 className="rounded px-4 py-2 bg-gray-100"
+                disabled={assignGuard.submitting}
+                aria-disabled={assignGuard.submitting}
               >
                 Close
               </button>
-              <button type="submit" className="rounded px-4 py-2 bg-blue-600 text-white">
-                Submit
+              <button
+                type="submit"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={assignGuard.submitting}
+                title={assignGuard.submitting ? "Submitting..." : "Submit"}
+              >
+                {assignGuard.submitting ? "Submitting…" : "Submit"}
               </button>
             </div>
           </form>
@@ -618,14 +648,13 @@ export default function PendingDepositsTable() {
         <div
           className="fixed inset-0 bg-black/60 flex items-start justify-center p-4"
           onMouseDown={(e) => {
+            if (delGuard.submitting) return;                     // ← kunci overlay saat submit
             if (e.currentTarget === e.target) setDelOpen(false); // klik overlay
           }}
         >
           <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitDelete();
-            }}
+            onSubmit={(e) => { e.preventDefault(); delGuard.run(submitDelete); }}     // ← kunci submit 1×
+            onKeyDown={(e) => { if (delGuard.submitting && e.key === "Enter") e.preventDefault(); }} // blok Enter
             className="bg-white rounded border w-full max-w-lg mt-14"
           >
             <div className="p-4 border-b font-semibold">Konfirmasi delete deposit?</div>
@@ -660,11 +689,19 @@ export default function PendingDepositsTable() {
                 type="button"
                 onClick={() => setDelOpen(false)}
                 className="rounded px-4 py-2 bg-gray-100"
+                disabled={delGuard.submitting}
+                aria-disabled={delGuard.submitting}
               >
                 Close
               </button>
-              <button type="submit" className="rounded px-4 py-2 bg-red-600 text-white">
-                Submit
+              <button
+                type="submit"
+                className="rounded px-4 py-2 bg-red-600 text-white disabled:opacity-60"
+                disabled={delGuard.submitting}
+                aria-disabled={delGuard.submitting}
+                title={delGuard.submitting ? "Deleting..." : "Submit"}
+              >
+                {delGuard.submitting ? "Deleting…" : "Submit"}
               </button>
             </div>
           </form>
