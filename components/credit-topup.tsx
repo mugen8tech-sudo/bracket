@@ -1,8 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
+
+function useSubmitGuard() {
+  const lockRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  const run = useCallback(async <T,>(fn: () => Promise<T> | T) => {
+    if (lockRef.current) return;
+    lockRef.current = true; setSubmitting(true);
+    try { return await fn(); } finally { setSubmitting(false); lockRef.current = false; }
+  }, []);
+  return { submitting, run };
+}
 
 /* ============ helpers angka (positif saja) ============ */
 function formatWithGroupingLive(raw: string) {
@@ -66,6 +77,7 @@ export default function CreditTopup() {
   const [txnAt, setTxnAt] = useState(nowLocalDatetimeValue());
   const [desc, setDesc] = useState("");
   const amountRef = useRef<HTMLInputElement | null>(null);
+  const newGuard = useSubmitGuard();
 
   // bootstrap tenant info
   useEffect(() => {
@@ -205,10 +217,14 @@ export default function CreditTopup() {
       {showNew && (
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
-          onMouseDown={(e)=>{ if (e.currentTarget === e.target) setShowNew(false); }}
+          onMouseDown={(e) => {
+            if (newGuard.submitting) return;                  // ← kunci overlay
+            if (e.currentTarget === e.target) setShowNew(false);
+          }}
         >
           <form
-            onSubmit={(e)=>{ e.preventDefault(); submitNew(); }}
+            onSubmit={(e) => { e.preventDefault(); newGuard.run(submitNew); }} // ← kunci submit 1×
+            onKeyDown={(e) => { if (newGuard.submitting && e.key === "Enter") e.preventDefault(); }}
             className="bg-white rounded border w-full max-w-xl mt-10"
           >
             <div className="p-4 border-b font-semibold">New Credit Topup — {tenantName}</div>
@@ -241,8 +257,24 @@ export default function CreditTopup() {
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
-              <button type="button" onClick={()=>setShowNew(false)} className="rounded px-4 py-2 bg-gray-100">Close</button>
-              <button type="submit" className="rounded px-4 py-2 bg-blue-600 text-white">Submit</button>
+              <button
+                type="button"
+                onClick={() => setShowNew(false)}
+                className="rounded px-4 py-2 bg-gray-100"
+                disabled={newGuard.submitting}
+                aria-disabled={newGuard.submitting}
+              >
+                Close
+              </button>
+              <button
+                type="submit"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={newGuard.submitting}
+                aria-disabled={newGuard.submitting}
+                title={newGuard.submitting ? "Submitting..." : "Submit"}
+              >
+                {newGuard.submitting ? "Submitting…" : "Submit"}
+              </button>
             </div>
           </form>
         </div>
