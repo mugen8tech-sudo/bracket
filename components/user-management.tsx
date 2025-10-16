@@ -616,7 +616,7 @@ export default function UserManagement() {
                 Close
               </button>
               <button type="submit"
-                      className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                      className="rounded px-4 py-2 bg-red-600 text-white disabled:opacity-60"
                       disabled={resignGuard.submitting} aria-disabled={resignGuard.submitting}
                       title={resignGuard.submitting ? "Submitting..." : "Submit"}>
                 {resignGuard.submitting ? "Submitting…" : "Submit"}
