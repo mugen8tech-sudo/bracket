@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
@@ -16,7 +16,7 @@ function useSubmitGuard() {
 }
 
 /** ==== helpers ==== */
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 
 function normalizeMinus(raw: string) { return raw.replace(/\u2212|\u2013|\u2014/g, "-"); }
 function formatWithGroupingLive(raw: string) {
@@ -181,6 +181,7 @@ export default function CreditAdjustment() {
 
   const canPrev = page > 1;
   const canNext = page < totalPages;
+  const pageLabel = useMemo(() => `Page ${page} / ${totalPages}`, [page, totalPages]);
 
   /** submit new */
   const submitNew = async () => {
@@ -311,6 +312,41 @@ export default function CreditAdjustment() {
             </tbody>
           </table>
         </form>
+      </div>
+
+      {/* Pagination (meniru CreditMutationsTable) */}
+      <div className="flex justify-center">
+        <nav className="inline-flex items-center gap-1 text-sm select-none">
+          <button
+            onClick={() => canPrev && load(1)}
+            disabled={!canPrev}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            First
+          </button>
+          <button
+            onClick={() => canPrev && load(page - 1)}
+            disabled={!canPrev}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="px-3 py-1 rounded border bg-white">{pageLabel}</span>
+          <button
+            onClick={() => canNext && load(page + 1)}
+            disabled={!canNext}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Next
+          </button>
+          <button
+            onClick={() => canNext && load(totalPages)}
+            disabled={!canNext}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Last
+          </button>
+        </nav>
       </div>
 
       {/* Modal New Credit Adjustment */}
