@@ -16,30 +16,31 @@ export async function POST(req: NextRequest) {
       return new Response("Name, email, password are required", { status: 400 });
     }
 
-    // 1) Buat user di Auth
+    // 1) Create user di Auth (email confirmed)
     const { data: created, error: e1 } = await supabaseAdmin.auth.admin.createUser({
       email, password, email_confirm: true,
-      app_metadata: { tenant_id: tenantId }
+      app_metadata: { tenant_id: tenantId },
     });
     if (e1) {
       const msg = (e1.message || "").toLowerCase();
       if (msg.includes("already") && msg.includes("registered")) {
         return new Response("Email sudah terdaftar.", { status: 409 });
       }
-      return new Response(e1.message, { status: 400 });
+      return new Response(`Auth error: ${e1.message}`, { status: 400 });
     }
-    const newUser = created.user!;
-    const uid = newUser.id;
+    const user = created.user!;
+    const uid = user.id;
 
-    // Pastikan app_metadata.tenant_id = tenant admin (kalau belum)
-    const metaTenant = (newUser.app_metadata as any)?.tenant_id;
+    // 2) (Jaga-jaga) sinkronkan app_metadata.tenant_id bila createUser mengabaikannya
+    const metaTenant = (user.app_metadata as any)?.tenant_id;
     if (metaTenant !== tenantId) {
-      await supabaseAdmin.auth.admin.updateUserById(uid, {
-        app_metadata: { ...(newUser.app_metadata as any), tenant_id: tenantId },
+      const { error: eMeta } = await supabaseAdmin.auth.admin.updateUserById(uid, {
+        app_metadata: { ...(user.app_metadata as any), tenant_id: tenantId },
       } as any);
+      if (eMeta) return new Response(`Auth meta error: ${eMeta.message}`, { status: 400 });
     }
 
-    // 3) UPSERT supaya idempotent (hindari duplicate key pkey)
+    // 3) Idempotent: UPSERT profiles → paksa tenant & role yang benar
     const { error: e2 } = await supabaseAdmin
       .from("profiles")
       .upsert(
@@ -47,15 +48,15 @@ export async function POST(req: NextRequest) {
           user_id: uid,
           tenant_id: tenantId,
           full_name,
-          role,
+          role, // "admin" | "cs" | "viewer"
           created_at: new Date().toISOString(),
         },
         { onConflict: "user_id" }
       );
-    if (e2) return new Response(e2.message, { status: 400 });
+    if (e2) return new Response(`DB error (profiles upsert): ${e2.message}`, { status: 400 });
 
     return Response.json({ ok: true, user_id: uid });
   } catch (err: any) {
-    return err instanceof Response ? err : new Response("Server error", { status: 500 });
+    return err instanceof Response ? err : new Response("Server error creating new user", { status: 500 });
   }
 }
