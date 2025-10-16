@@ -1,8 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
+
+function useSubmitGuard() {
+  const lockRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const run = useCallback(async <T,>(fn: () => Promise<T> | T) => {
+    if (lockRef.current) return;           // sudah terkunci → abaikan submit berikutnya
+    lockRef.current = true;
+    setSubmitting(true);
+    try {
+      return await fn();
+    } finally {
+      setSubmitting(false);
+      lockRef.current = false;
+    }
+  }, []);
+
+  return { submitting, run };
+}
 
 /** ===== Types ===== */
 type Bank = {
@@ -44,6 +63,10 @@ export default function BankManagement() {
   /** ===== Data banks ===== */
   const [rows, setRows] = useState<Bank[]>([]);
   const [loading, setLoading] = useState(true);
+
+  /** ===== Guard Submit ===== */
+  const editGuard   = useSubmitGuard();
+  const toggleGuard = useSubmitGuard();
 
   /** ===== Edit modal ===== */
   const [showEdit, setShowEdit] = useState(false);
@@ -281,9 +304,21 @@ export default function BankManagement() {
       {showEdit && editing && (
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
-          onMouseDown={(e) => { if (e.currentTarget === e.target) setShowEdit(false); }}
+          onMouseDown={(e) => {
+            if (editGuard.submitting) return;                // ← kunci overlay saat submit
+            if (e.currentTarget === e.target) setShowEdit(false);
+          }}
         >
-          <form onSubmit={submitEdit} className="bg-white rounded border w-full max-w-2xl mt-10">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              editGuard.run(() => submitEdit(e as any));     // ← kunci submit 1×
+            }}
+            onKeyDown={(e) => {
+              if (editGuard.submitting && e.key === "Enter") e.preventDefault(); // blok Enter
+            }}
+            className="bg-white rounded border w-full max-w-2xl mt-10"
+          >
             <div className="p-4 border-b font-semibold">Edit Bank</div>
             <div className="p-4 space-y-3">
               <div>
@@ -336,9 +371,23 @@ export default function BankManagement() {
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
-              <button type="button" onClick={()=>setShowEdit(false)} className="rounded px-4 py-2 bg-gray-100">Close</button>
-              <button disabled={saving} className="rounded px-4 py-2 bg-blue-600 text-white">
-                {saving ? "Saving…" : "Submit"}
+              <button
+                type="button"
+                onClick={() => setShowEdit(false)}
+                className="rounded px-4 py-2 bg-gray-100"
+                disabled={saving || editGuard.submitting}
+                aria-disabled={saving || editGuard.submitting}
+              >
+                Close
+              </button>
+              <button
+                type="submit"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={saving || editGuard.submitting}
+                aria-disabled={saving || editGuard.submitting}
+                title={editGuard.submitting ? "Submitting..." : "Submit"}
+              >
+                {saving || editGuard.submitting ? "Saving…" : "Submit"}
               </button>
             </div>
           </form>
@@ -349,9 +398,21 @@ export default function BankManagement() {
       {showToggle && tBank && (
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
-          onMouseDown={(e)=>{ if(e.currentTarget===e.target) setShowToggle(false); }}
+          onMouseDown={(e) => {
+            if (toggleGuard.submitting) return;              // ← kunci overlay saat submit
+            if (e.currentTarget === e.target) setShowToggle(false);
+          }}
         >
-          <form onSubmit={submitToggle} className="bg-white rounded border w-full max-w-2xl mt-10">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              toggleGuard.run(() => submitToggle(e as any)); // ← kunci submit 1×
+            }}
+            onKeyDown={(e) => {
+              if (toggleGuard.submitting && e.key === "Enter") e.preventDefault();
+            }}
+            className="bg-white rounded border w-full max-w-2xl mt-10"
+          >
             <div className="p-4 border-b font-semibold">Konfirmasi Aktifasi bank</div>
             <div className="p-4 space-y-3 text-sm">
               <div className="grid grid-cols-3 gap-2">
@@ -372,8 +433,24 @@ export default function BankManagement() {
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
-              <button type="button" onClick={()=>setShowToggle(false)} className="rounded px-4 py-2 bg-gray-100">Close</button>
-              <button className="rounded px-4 py-2 bg-blue-600 text-white">Submit</button>
+              <button
+                type="button"
+                onClick={() => setShowToggle(false)}
+                className="rounded px-4 py-2 bg-gray-100"
+                disabled={toggleGuard.submitting}
+                aria-disabled={toggleGuard.submitting}
+              >
+                Close
+              </button>
+              <button
+                type="submit"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={toggleGuard.submitting}
+                aria-disabled={toggleGuard.submitting}
+                title={toggleGuard.submitting ? "Submitting..." : "Submit"}
+              >
+                {toggleGuard.submitting ? "Submitting…" : "Submit"}
+              </button>
             </div>
           </form>
         </div>
