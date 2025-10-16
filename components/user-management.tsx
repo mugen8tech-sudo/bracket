@@ -414,7 +414,7 @@ export default function UserManagement() {
                             </button>
                             <button
                               type="button"
-                              className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                              className="h-8 min-w-[52px] px-3 rounded bg-red-600 text-white"
                               onClick={() => {
                                 if (myRole !== "admin") { alert("Hanya admin"); return; }
                                 openResign(u);
