@@ -37,7 +37,7 @@ function fmtIdDateTime(d: string) {
   const time = dt.toLocaleTimeString("id-ID", { hour12: false, timeZone: "Asia/Jakarta" }).replace(/:/g, ".");
   return `${date}, ${time}`;
 }
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 
 export default function InterbankTransfersTable() {
   const supabase = supabaseBrowser();
