@@ -1,7 +1,26 @@
 "use client";
 
-import { useEffect, useState, useCallback, FormEvent } from "react";
+import { useEffect, useState, useCallback, useRef, FormEvent } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+
+function useSubmitGuard() {
+  const lockRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const run = useCallback(async <T,>(fn: () => Promise<T> | T) => {
+    if (lockRef.current) return;         // sudah terkunci → abaikan submit berikutnya
+    lockRef.current = true;
+    setSubmitting(true);
+    try {
+      return await fn();
+    } finally {
+      setSubmitting(false);
+      lockRef.current = false;
+    }
+  }, []);
+
+  return { submitting, run };
+}
 
 type Lead = {
   id: number;
@@ -19,6 +38,8 @@ const PAGE_SIZE = 25; // <= permintaan: khusus Leads 25 baris/halaman
 
 export default function LeadsTable() {
   const supabase = supabaseBrowser();
+
+  const newLeadGuard = useSubmitGuard();
 
   // ---------- data & pagination ----------
   const [rows, setRows] = useState<Lead[]>([]);
@@ -153,11 +174,14 @@ export default function LeadsTable() {
   useEffect(() => {
     if (!showForm) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeModal();
+      if (e.key === "Escape") {
+        if (newLeadGuard.submitting) { e.preventDefault(); return; }
+        closeModal();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [showForm, closeModal]);
+  }, [showForm, closeModal, newLeadGuard.submitting]);
 
   // ---------- Normalisasi untuk guard ----------
   const toNull = (v?: string | null) =>
@@ -286,8 +310,7 @@ export default function LeadsTable() {
   };
 
   const onSubmitModal = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault(); // ENTER akan men-submit form
-    await save();
+    e.preventDefault(); await newLeadGuard.run(save);
   };
 
   return (
@@ -516,12 +539,14 @@ export default function LeadsTable() {
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
           onMouseDown={(e) => {
-            if (e.currentTarget === e.target) closeModal(); // klik overlay -> close
+            if (newLeadGuard.submitting) return;
+            if (e.currentTarget === e.target) closeModal();
           }}
         >
           {/* posisi lebih ke atas */}
           <form
-            onSubmit={onSubmitModal}
+            onSubmit={(e) => { e.preventDefault(); newLeadGuard.run(save); }}
+            onKeyDown={(e) => { if (newLeadGuard.submitting && e.key === "Enter") e.preventDefault(); }}
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
             <div className="p-4 border-b flex justify-between items-center">
@@ -533,6 +558,8 @@ export default function LeadsTable() {
                 onClick={closeModal}
                 className="text-sm"
                 aria-label="Close"
+                disabled={newLeadGuard.submitting}
+                aria-disabled={newLeadGuard.submitting}
               >
                 ✕
               </button>
@@ -631,14 +658,19 @@ export default function LeadsTable() {
                 type="button"
                 onClick={closeModal}
                 className="rounded px-4 py-2 bg-gray-100"
+                disabled={newLeadGuard.submitting}
+                aria-disabled={newLeadGuard.submitting}
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="rounded px-4 py-2 bg-blue-600 text-white"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={newLeadGuard.submitting}
+                aria-disabled={newLeadGuard.submitting}
+                title={newLeadGuard.submitting ? "Saving..." : "Save"}
               >
-                Save
+                {newLeadGuard.submitting ? "Saving…" : "Save"}
               </button>
             </div>
           </form>
