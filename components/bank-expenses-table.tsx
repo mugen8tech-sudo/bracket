@@ -21,7 +21,7 @@ type ExpenseRow = {
 type BankLite = { id: number; bank_code: string; account_name: string; account_no: string; };
 type ProfileLite = { user_id: string; full_name: string | null };
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 
 // di atas file (atau impor dari lib)
 const EXPENSE_CATEGORY_CODES = [
