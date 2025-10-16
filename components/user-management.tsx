@@ -35,7 +35,7 @@ type UserRow = {
 };
 
 type MyRole = "admin" | "cs" | "viewer" | "other";
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 
 /** ====== Helpers ====== */
 function normalizeRole(r?: string | null): MyRole {
