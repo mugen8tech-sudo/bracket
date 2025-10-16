@@ -829,7 +829,7 @@ export default function BanksTable() {
                   </tr>,
                   <tr key="__summary__" className="bg-gray-100 font-semibold border-t-2">
                     <td colSpan={3} className="text-right pr-2">
-                      TOTAL ACTIVE BALANCE
+                      Total :
                     </td>
                     <td className="text-center">{formatAmount(totalActiveBalance)}</td>
                     <td colSpan={2}></td>
@@ -914,10 +914,10 @@ export default function BanksTable() {
               els.push(
                 <tr key="__summary__" className="bg-gray-100 font-semibold border-t-2">
                   <td colSpan={3} className="text-right pr-2">
-                    TOTAL ACTIVE BALANCE
+                    Total :
                   </td>
                   <td className="text-center">{formatAmount(totalActiveBalance)}</td>
-                  <td colSpan={2}></td>
+                  <td colSpan={2}>:)</td>
                 </tr>
               );
 
