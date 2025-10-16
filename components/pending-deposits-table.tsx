@@ -422,6 +422,7 @@ export default function PendingDepositsTable() {
                       <td>{r.id}</td>
                       <td className="whitespace-normal break-words">
                         <div className="font-semibold">{bankLabel(r.bank_id)}</div>
+                        <div className="my-1 h-px bg-gray-200" />
                         <div className="text-xs text-gray-600">
                           {r.description && r.description.trim() !== "" ? r.description : "-"}
                         </div>
