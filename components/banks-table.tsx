@@ -779,7 +779,7 @@ export default function BanksTable() {
             {/* Baris ringkasan balance di atas header kolom */}
             <tr>
               <th colSpan={6} className="text-left p-1">
-                Balance: {formatAmount(tenantCredit)}
+                Credit Balance: {formatAmount(tenantCredit)}
               </th>
             </tr>
 
