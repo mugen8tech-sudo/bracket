@@ -510,9 +510,11 @@ export default function UserManagement() {
       {/* ===== Modal: Edit User ===== */}
       {showEdit && (
         <div className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
-             onMouseDown={(e)=>{ if(e.currentTarget===e.target) setShowEdit(false); }}>
-          <form onSubmit={(e)=>{ e.preventDefault(); submitEdit(); }}
-                className="bg-white rounded border w-full max-w-xl mt-10">
+             onMouseDown={(e)=>{ if (editGuard.submitting) return; if(e.currentTarget===e.target) setShowEdit(false); }}>
+          <form
+            onSubmit={(e)=>{ e.preventDefault(); editGuard.run(submitEdit); }}
+            onKeyDown={(e)=>{ if (editGuard.submitting && e.key === "Enter") e.preventDefault(); }}
+            className="bg-white rounded border w-full max-w-xl mt-10">
             <div className="p-4 border-b font-semibold">Edit user</div>
             <div className="p-4 space-y-3">
               <div>
@@ -537,8 +539,17 @@ export default function UserManagement() {
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
-              <button type="button" onClick={()=>setShowEdit(false)} className="rounded px-4 py-2 bg-gray-100">Close</button>
-              <button type="submit" className="rounded px-4 py-2 bg-blue-600 text-white">Submit</button>
+              <button type="button" onClick={()=>setShowEdit(false)}
+                      className="rounded px-4 py-2 bg-gray-100"
+                      disabled={editGuard.submitting} aria-disabled={editGuard.submitting}>
+                Close
+              </button>
+              <button type="submit"
+                      className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                      disabled={editGuard.submitting} aria-disabled={editGuard.submitting}
+                      title={editGuard.submitting ? "Submitting..." : "Submit"}>
+                {editGuard.submitting ? "Submitting…" : "Submit"}
+              </button>
             </div>
           </form>
         </div>
@@ -547,9 +558,11 @@ export default function UserManagement() {
       {/* ===== Modal: Change Password ===== */}
       {showPwd && (
         <div className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
-             onMouseDown={(e)=>{ if(e.currentTarget===e.target) setShowPwd(false); }}>
-          <form onSubmit={(e)=>{ e.preventDefault(); submitPwd(); }}
-                className="bg-white rounded border w-full max-w-xl mt-10">
+             onMouseDown={(e)=>{ if (pwdGuard.submitting) return; if(e.currentTarget===e.target) setShowPwd(false); }}>
+          <form
+            onSubmit={(e)=>{ e.preventDefault(); pwdGuard.run(submitPwd); }}
+            onKeyDown={(e)=>{ if (pwdGuard.submitting && e.key === "Enter") e.preventDefault(); }}
+            className="bg-white rounded border w-full max-w-xl mt-10">
             <div className="p-4 border-b font-semibold">Edit Password for {pName}</div>
             <div className="p-4 space-y-3">
               <div>
@@ -564,8 +577,17 @@ export default function UserManagement() {
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
-              <button type="button" onClick={()=>setShowPwd(false)} className="rounded px-4 py-2 bg-gray-100">Close</button>
-              <button type="submit" className="rounded px-4 py-2 bg-blue-600 text-white">Submit</button>
+              <button type="button" onClick={()=>setShowPwd(false)}
+                      className="rounded px-4 py-2 bg-gray-100"
+                      disabled={pwdGuard.submitting} aria-disabled={pwdGuard.submitting}>
+                Close
+              </button>
+              <button type="submit"
+                      className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                      disabled={pwdGuard.submitting} aria-disabled={pwdGuard.submitting}
+                      title={pwdGuard.submitting ? "Submitting..." : "Submit"}>
+                {pwdGuard.submitting ? "Submitting…" : "Submit"}
+              </button>
             </div>
           </form>
         </div>
@@ -574,9 +596,11 @@ export default function UserManagement() {
       {/* ===== Modal: Resign ===== */}
       {showResign && (
         <div className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
-             onMouseDown={(e)=>{ if(e.currentTarget===e.target) setShowResign(false); }}>
-          <form onSubmit={(e)=>{ e.preventDefault(); submitResign(); }}
-                className="bg-white rounded border w-full max-w-xl mt-10">
+             onMouseDown={(e)=>{ if (resignGuard.submitting) return; if(e.currentTarget===e.target) setShowResign(false); }}>
+          <form
+            onSubmit={(e)=>{ e.preventDefault(); resignGuard.run(submitResign); }}
+            onKeyDown={(e)=>{ if (resignGuard.submitting && e.key === "Enter") e.preventDefault(); }}
+            className="bg-white rounded border w-full max-w-xl mt-10">
             <div className="p-4 border-b font-semibold">Tandai Resign untuk {rName}</div>
             <div className="p-4 space-y-3">
               <div>
@@ -586,8 +610,17 @@ export default function UserManagement() {
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
-              <button type="button" onClick={()=>setShowResign(false)} className="rounded px-4 py-2 bg-gray-100">Close</button>
-              <button type="submit" className="rounded px-4 py-2 bg-blue-600 text-white">Submit</button>
+              <button type="button" onClick={()=>setShowResign(false)}
+                      className="rounded px-4 py-2 bg-gray-100"
+                      disabled={resignGuard.submitting} aria-disabled={resignGuard.submitting}>
+                Close
+              </button>
+              <button type="submit"
+                      className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                      disabled={resignGuard.submitting} aria-disabled={resignGuard.submitting}
+                      title={resignGuard.submitting ? "Submitting..." : "Submit"}>
+                {resignGuard.submitting ? "Submitting…" : "Submit"}
+              </button>
             </div>
           </form>
         </div>
