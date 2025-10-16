@@ -339,14 +339,16 @@ export default function UserManagement() {
                             </button>
                             <button
                               type="button"
-                              className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                              className={`min-h-[32px] min-w-[120px] px-2 py-1 rounded bg-blue-600 text-white
+                                          whitespace-normal leading-tight text-center`}
                               onClick={() => {
                                 if (myRole !== "admin") { alert("Hanya admin"); return; }
                                 openPwd(u);
                               }}
                               disabled={myRole !== "admin"}
+                              title="Change password"
                             >
-                              Change password
+                              Change Password
                             </button>
                             <button
                               type="button"
