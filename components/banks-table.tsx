@@ -904,11 +904,15 @@ export default function BanksTable() {
       {showNew && (
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
-          onMouseDown={(e) => { if (e.currentTarget === e.target) closeNew(); }}
+          onMouseDown={(e) => {
+            if (dpGuard.submitting) return;
+            if (e.currentTarget === e.target) closeNew();
+          }}
         >
           <form
-            onSubmit={(e) => { e.preventDefault(); submitNewBank(); }}
-            className="bg-white rounded border w-full max-w-xl mt-10"
+            onSubmit={(e) => { e.preventDefault(); dpGuard.run(submitNewBank); }}
+            onKeyDown={(e) => { if (dpGuard.submitting && e.key === "Enter") e.preventDefault(); }}
+            className="bg-white rounded border w-full max-w-2xl mt-10"
           >
             <div className="p-4 border-b font-semibold">New Bank</div>
             <div className="p-4 space-y-3">
@@ -971,8 +975,24 @@ export default function BanksTable() {
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
-              <button type="button" onClick={closeNew} className="rounded px-4 py-2 bg-gray-100">Close</button>
-              <button type="submit" className="rounded px-4 py-2 bg-blue-600 text-white">Save</button>
+              <button
+                type="button"
+                onClick={closeNew}
+                className="rounded px-4 py-2 bg-gray-100"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
+              >
+                Close
+              </button>
+              <button
+                type="submit"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
+                title={dpGuard.submitting ? "Submitting..." : "Submit"}
+              >
+                {dpGuard.submitting ? "Submitting…" : "Submit"}
+              </button>
             </div>
           </form>
         </div>
