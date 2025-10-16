@@ -63,7 +63,7 @@ export default function CreditTopup() {
   const [tenantCredit, setTenantCredit] = useState<number>(0);
 
   // table & paging
-  const PAGE_SIZE = 50;
+  const PAGE_SIZE = 25;
   const [loading, setLoading] = useState<boolean>(true);
   const [rows, setRows] = useState<Row[]>([]);
   const [page, setPage] = useState(1);
