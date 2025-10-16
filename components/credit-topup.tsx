@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
@@ -70,6 +70,11 @@ export default function CreditTopup() {
   const [total, setTotal] = useState(0);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({});
+
+  // paging helpers (meniru CreditMutationsTable)
+  const canPrev = page > 1;
+  const canNext = page < totalPages;
+  const pageLabel = useMemo(() => `Page ${page} / ${totalPages}`, [page, totalPages]);
 
   // modal
   const [showNew, setShowNew] = useState(false);
@@ -205,11 +210,35 @@ export default function CreditTopup() {
       {/* Pagination */}
       <div className="flex justify-center">
         <nav className="inline-flex items-center gap-1 text-sm select-none">
-          <button onClick={() => page>1 && load(1)} disabled={page<=1} className="px-3 py-1 rounded border bg-white disabled:opacity-50">First</button>
-          <button onClick={() => page>1 && load(page-1)} disabled={page<=1} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Previous</button>
-          <span className="px-3 py-1 rounded border bg-white">Page {page} / {totalPages}</span>
-          <button onClick={() => page<totalPages && load(page+1)} disabled={page>=totalPages} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Next</button>
-          <button onClick={() => page<totalPages && load(totalPages)} disabled={page>=totalPages} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Last</button>
+          <button
+            onClick={() => canPrev && load(1)}
+            disabled={!canPrev}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            First
+          </button>
+          <button
+            onClick={() => canPrev && load(page - 1)}
+            disabled={!canPrev}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="px-3 py-1 rounded border bg-white">{pageLabel}</span>
+          <button
+            onClick={() => canNext && load(page + 1)}
+            disabled={!canNext}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Next
+          </button>
+          <button
+            onClick={() => canNext && load(totalPages)}
+            disabled={!canNext}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Last
+          </button>
         </nav>
       </div>
 
