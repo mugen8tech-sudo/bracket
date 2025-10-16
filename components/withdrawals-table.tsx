@@ -1,9 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 import Link from "next/link";
+
+function useSubmitGuard() {
+  const lockRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const run = async <T,>(fn: () => Promise<T> | T) => {
+    if (lockRef.current) return;      // sudah terkunci → abaikan submit berikutnya
+    lockRef.current = true;
+    setSubmitting(true);
+    try {
+      return await fn();
+    } finally {
+      setSubmitting(false);
+      lockRef.current = false;
+    }
+  };
+
+  return { submitting, run };
+}
 
 type WithdrawalRow = {
   id: number;
@@ -282,6 +301,7 @@ export default function WithdrawalsTable() {
 
   // ===== Reverse (Delete) modal =====
   const [delOpen, setDelOpen] = useState(false);
+  const delGuard = useSubmitGuard();
   const [delNote, setDelNote] = useState("");
   const [delRow, setDelRow] = useState<WithdrawalRow | null>(null);
   const [delBank, setDelBank] = useState<{
@@ -312,13 +332,14 @@ export default function WithdrawalsTable() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && delOpen) {
+        if (delGuard.submitting) { e.preventDefault(); return; } // ← kunci saat submit
         e.preventDefault();
         closeDelete();
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [delOpen, closeDelete]);
+  }, [delOpen, closeDelete, delGuard.submitting]);
 
   const submitDelete = async () => {
     if (!delRow) return;
@@ -539,13 +560,17 @@ export default function WithdrawalsTable() {
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
           onMouseDown={(e) => {
+            if (delGuard.submitting) return;
             if (e.currentTarget === e.target) closeDelete();
           }}
         >
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              submitDelete();
+              delGuard.run(submitDelete);
+            }}
+            onKeyDown={(e) => {
+              if (delGuard.submitting && e.key === "Enter") e.preventDefault(); // blok Enter saat submit
             }}
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
@@ -618,14 +643,19 @@ export default function WithdrawalsTable() {
                 type="button"
                 onClick={closeDelete}
                 className="rounded px-4 py-2 bg-gray-100"
+                disabled={delGuard.submitting}
+                aria-disabled={delGuard.submitting}
               >
                 Close
               </button>
               <button
                 type="submit"
-                className="rounded px-4 py-2 bg-red-600 text-white"
+                className="rounded px-4 py-2 bg-red-600 text-white disabled:opacity-60"
+                disabled={delGuard.submitting}
+                aria-disabled={delGuard.submitting}
+                title={delGuard.submitting ? "Reversing..." : "Submit"}
               >
-                Submit
+                {delGuard.submitting ? "Reversing…" : "Submit"}
               </button>
             </div>
           </form>
