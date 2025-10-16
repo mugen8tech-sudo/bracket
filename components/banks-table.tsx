@@ -840,7 +840,7 @@ export default function BanksTable() {
               const els = data.map((r) => {
                 const rowBg =
                   r.usage_type === "deposit"
-                    ? "bg-green-200"
+                    ? "bg-blue-200"
                     : r.usage_type === "withdraw"
                     ? "bg-red-200"
                     : "bg-white";
