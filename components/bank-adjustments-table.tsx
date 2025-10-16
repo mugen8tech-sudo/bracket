@@ -21,7 +21,7 @@ type AdjRow = {
 type BankLite = { id: number; bank_code: string; account_name: string; account_no: string; };
 type ProfileLite = { user_id: string; full_name: string | null };
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 
 function startOfDayJakartaISO(d: string) {
   return new Date(`${d}T00:00:00+07:00`).toISOString();
