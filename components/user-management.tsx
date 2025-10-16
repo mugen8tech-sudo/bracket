@@ -1,7 +1,26 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+
+function useSubmitGuard() {
+  const lockRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const run = useCallback(async <T,>(fn: () => Promise<T> | T) => {
+    if (lockRef.current) return;        // sudah terkunci → abaikan submit berikutnya
+    lockRef.current = true;
+    setSubmitting(true);
+    try {
+      return await fn();
+    } finally {
+      setSubmitting(false);
+      lockRef.current = false;
+    }
+  }, []);
+
+  return { submitting, run };
+}
 
 /** ====== Types & Const ====== */
 type UserRow = {
@@ -35,6 +54,17 @@ export default function UserManagement() {
   const [myRole, setMyRole] = useState<MyRole>("other");
   const [tenantName, setTenantName] = useState("");
   const [tenantId, setTenantId] = useState("");
+
+  // submit guards
+  const searchGuard = useSubmitGuard();
+  const newGuard    = useSubmitGuard();
+  const editGuard   = useSubmitGuard();
+  const pwdGuard    = useSubmitGuard();
+  const resignGuard = useSubmitGuard();
+
+  const isSubmittingAny =
+    searchGuard.submitting || newGuard.submitting || editGuard.submitting ||
+    pwdGuard.submitting || resignGuard.submitting;
 
   // list
   const [rows, setRows] = useState<UserRow[]>([]);
@@ -81,6 +111,7 @@ export default function UserManagement() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (isSubmittingAny) { e.preventDefault(); return; } // ← kunci saat submit
         if (showNew) setShowNew(false);
         if (showEdit) setShowEdit(false);
         if (showPwd) setShowPwd(false);
@@ -89,7 +120,7 @@ export default function UserManagement() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [showNew, showEdit, showPwd, showResign]); // :contentReference[oaicite:1]{index=1}
+  }, [isSubmittingAny, showNew, showEdit, showPwd, showResign]);
 
   /** ====== Bootstrap: cek role (admin-only) & tenant name ====== */
   useEffect(() => {
@@ -150,7 +181,10 @@ export default function UserManagement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authorized]);
 
-  const applySearch: React.FormEventHandler = (e) => { e.preventDefault(); load(1); };
+  const applySearch: React.FormEventHandler = (e) => {
+    e.preventDefault();
+    searchGuard.run(() => load(1));
+  };
 
   const pageLabel = useMemo(() => `Page ${page} / ${totalPages}`, [page, totalPages]);
 
@@ -271,7 +305,10 @@ export default function UserManagement() {
       </div>
 
       <div className="overflow-auto rounded border bg-white">
-        <form onSubmit={applySearch}>
+        <form
+          onSubmit={applySearch}
+          onKeyDown={(e) => { if (searchGuard.submitting && e.key === "Enter") e.preventDefault(); }}
+        >
           <table className="table-grid min-w-[1000px]" style={{ borderCollapse: "collapse" }}>
             <thead>
               {/* Top-right button */}
@@ -307,7 +344,13 @@ export default function UserManagement() {
                 <th />
                 <th />
                 <th className="text-right pr-3">
-                  <button className="rounded bg-blue-600 text-white px-3 py-1">submit</button>
+                  <button
+                    className="rounded bg-blue-600 text-white px-3 py-1 disabled:opacity-60"
+                    disabled={loading || searchGuard.submitting}
+                    aria-disabled={loading || searchGuard.submitting}
+                  >
+                    {searchGuard.submitting ? "Loading…" : "submit"}
+                  </button>
                 </th>
               </tr>
 
@@ -407,9 +450,11 @@ export default function UserManagement() {
       {/* ===== Modal: New User ===== */}
       {showNew && (
         <div className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
-             onMouseDown={(e)=>{ if(e.currentTarget===e.target) setShowNew(false); }}>
-          <form onSubmit={(e)=>{ e.preventDefault(); submitNew(); }}
-                className="bg-white rounded border w-full max-w-xl mt-10">
+             onMouseDown={(e)=>{ if (newGuard.submitting) return; if(e.currentTarget===e.target) setShowNew(false); }}>
+          <form
+            onSubmit={(e)=>{ e.preventDefault(); newGuard.run(submitNew); }}
+            onKeyDown={(e)=>{ if (newGuard.submitting && e.key === "Enter") e.preventDefault(); }}
+            className="bg-white rounded border w-full max-w-xl mt-10">
             <div className="p-4 border-b font-semibold">Create New user — {tenantName}</div>
             <div className="p-4 space-y-3">
               <div>
@@ -446,8 +491,17 @@ export default function UserManagement() {
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
-              <button type="button" onClick={()=>setShowNew(false)} className="rounded px-4 py-2 bg-gray-100">Close</button>
-              <button type="submit" className="rounded px-4 py-2 bg-blue-600 text-white">Submit</button>
+              <button type="button" onClick={()=>setShowNew(false)}
+                      className="rounded px-4 py-2 bg-gray-100"
+                      disabled={newGuard.submitting} aria-disabled={newGuard.submitting}>
+                Close
+              </button>
+              <button type="submit"
+                      className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                      disabled={newGuard.submitting} aria-disabled={newGuard.submitting}
+                      title={newGuard.submitting ? "Submitting..." : "Submit"}>
+                {newGuard.submitting ? "Submitting…" : "Submit"}
+              </button>
             </div>
           </form>
         </div>
