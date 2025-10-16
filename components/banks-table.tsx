@@ -799,103 +799,130 @@ export default function BanksTable() {
                 <td colSpan={6}>Loading…</td>
               </tr>
             ) : (() => {
-                // filter hanya ACTIVE, lalu urutkan berdasarkan metadata.display_order
-                const getOrder = (x: any) => {
-                  const v = x?.metadata?.display_order;
-                  const n = Number(v);
-                  return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
-                };
+              // filter hanya ACTIVE, lalu urutkan berdasarkan metadata.display_order
+              const getOrder = (x: any) => {
+                const v = x?.metadata?.display_order;
+                const n = Number(v);
+                return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+              };
 
-                const data = [...rows]
-                  .filter((b) => b.is_active)                    // sembunyikan DELETED
-                  .sort((a, b) => {
-                    const ao = getOrder(a);
-                    const bo = getOrder(b);
-                    if (ao !== bo) return ao - bo;               // urut ASC
-                    return b.id - a.id;                          // fallback: ID terbaru dulu
-                  });
-
-                if (data.length === 0) {
-                  return (
-                    <tr>
-                      <td colSpan={6}>No data</td>
-                    </tr>
-                  );
-                }
-
-                return data.map((r) => {
-                  const rowBg =
-                    r.usage_type === "deposit"
-                      ? "bg-green-200"
-                      : r.usage_type === "withdraw"
-                      ? "bg-red-200"
-                      : "bg-white";
-
-                  return (
-                    <tr key={r.id} className={rowBg}>
-                      <td>{r.id}</td>
-                      <td className="whitespace-normal break-words">
-                        <div className="font-semibold">
-                          [{r.bank_code}] {r.account_name}
-                        </div>
-                        <div className="text-xs">{r.account_no}</div>
-                      </td>
-                      <td className="text-center">{tenantName || "-"}</td>
-                      <td className="text-center">{formatAmount(r.balance)}</td>
-                      <td className="text-center">
-                        <div className="inline-flex items-center gap-2">
-                          <button
-                            className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
-                            title="Deposit"
-                            onClick={() => openDPFor(r)}
-                          >
-                            DP
-                          </button>
-                          <button
-                            className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
-                            title="Withdraw"
-                            onClick={() => openWDFor(r)}
-                          >
-                            WD
-                          </button>
-                          <button
-                            className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
-                            title="Pending Deposit"
-                            onClick={() => openPDPFor(r)}
-                          >
-                            PDP
-                          </button>
-                        </div>
-                      </td>
-                      <td className="text-center">
-                        <div className="inline-flex items-center gap-2">
-                          <button
-                            className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
-                            title="Interbank Transfer"
-                            onClick={() => openTTFor(r)}
-                          >
-                            TT
-                          </button>
-                          <button
-                            className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
-                            title="Bank Adjustment"
-                            onClick={() => openAdjFor(r)}
-                          >
-                            Adj
-                          </button>
-                          <button
-                            className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
-                            title="Biaya"
-                            onClick={() => openExpenseFor(r)}
-                          >
-                            Biaya
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
+              const data = [...rows]
+                .filter((b) => b.is_active) // aman walau query sudah is_active=true
+                .sort((a, b) => {
+                  const ao = getOrder(a);
+                  const bo = getOrder(b);
+                  if (ao !== bo) return ao - bo; // urut ASC
+                  return b.id - a.id;            // fallback: ID terbaru dulu
                 });
-              })()}
+
+              // === NEW: total balance semua bank aktif yang sedang ditampilkan ===
+              const totalActiveBalance = data.reduce(
+                (sum, b) => sum + (b.balance ?? 0),
+                0
+              );
+
+              if (data.length === 0) {
+                // Tetap tampilkan baris summary meskipun tidak ada data
+                return [
+                  <tr key="nodata">
+                    <td colSpan={6}>No data</td>
+                  </tr>,
+                  <tr key="__summary__" className="bg-gray-100 font-semibold border-t-2">
+                    <td colSpan={3} className="text-right pr-2">
+                      TOTAL ACTIVE BALANCE
+                    </td>
+                    <td className="text-center">{formatAmount(totalActiveBalance)}</td>
+                    <td colSpan={2}></td>
+                  </tr>,
+                ];
+              }
+
+              const els = data.map((r) => {
+                const rowBg =
+                  r.usage_type === "deposit"
+                    ? "bg-green-200"
+                    : r.usage_type === "withdraw"
+                    ? "bg-red-200"
+                    : "bg-white";
+
+                return (
+                  <tr key={r.id} className={rowBg}>
+                    <td>{r.id}</td>
+                    <td className="whitespace-normal break-words">
+                      <div className="font-semibold">
+                        [{r.bank_code}] {r.account_name}
+                      </div>
+                      <div className="text-xs">{r.account_no}</div>
+                    </td>
+                    <td className="text-center">{tenantName || "-"}</td>
+                    <td className="text-center">{formatAmount(r.balance)}</td>
+                    <td className="text-center">
+                      <div className="inline-flex items-center gap-2">
+                        <button
+                          className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                          title="Deposit"
+                          onClick={() => openDPFor(r)}
+                        >
+                          DP
+                        </button>
+                        <button
+                          className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                          title="Withdraw"
+                          onClick={() => openWDFor(r)}
+                        >
+                          WD
+                        </button>
+                        <button
+                          className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                          title="Pending Deposit"
+                          onClick={() => openPDPFor(r)}
+                        >
+                          PDP
+                        </button>
+                      </div>
+                    </td>
+                    <td className="text-center">
+                      <div className="inline-flex items-center gap-2">
+                        <button
+                          className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                          title="Interbank Transfer"
+                          onClick={() => openTTFor(r)}
+                        >
+                          TT
+                        </button>
+                        <button
+                          className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                          title="Bank Adjustment"
+                          onClick={() => openAdjFor(r)}
+                        >
+                          Adj
+                        </button>
+                        <button
+                          className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                          title="Biaya"
+                          onClick={() => openExpenseFor(r)}
+                        >
+                          Biaya
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              });
+
+              // === NEW: baris summary di paling bawah tabel ===
+              els.push(
+                <tr key="__summary__" className="bg-gray-100 font-semibold border-t-2">
+                  <td colSpan={3} className="text-right pr-2">
+                    TOTAL ACTIVE BALANCE
+                  </td>
+                  <td className="text-center">{formatAmount(totalActiveBalance)}</td>
+                  <td colSpan={2}></td>
+                </tr>
+              );
+
+              return els;
+            })()}
           </tbody>
         </table>
       </div>
