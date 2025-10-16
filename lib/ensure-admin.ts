@@ -15,8 +15,9 @@ export async function ensureAdmin(): Promise<AdminContext> {
     .single();
 
   if (error || !me?.tenant_id) throw new Response("Profile not found", { status: 403 });
-  if ((me.role ?? "").toLowerCase() !== "admin")
-    throw new Response("Forbidden: admin only", { status: 403 });
+
+  const role = (me.role ?? "").toLowerCase();
+  if (role !== "admin") throw new Response("Forbidden: admin only", { status: 403 });
 
   return { userId: user.id, tenantId: me.tenant_id };
 }
