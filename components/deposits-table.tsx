@@ -26,7 +26,7 @@ type DepositRow = {
   created_by_name?: string | null;
 };
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 const SUMMARY_BATCH = 1000; // batch agregasi summary filter
 
 function startOfDayJakartaISO(d: string) {
