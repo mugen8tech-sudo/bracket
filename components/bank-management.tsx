@@ -268,7 +268,7 @@ export default function BankManagement() {
             ) : (
               rowsSorted.map((r) => {
                 const bg =
-                  r.usage_type === "deposit" ? "bg-green-200"
+                  r.usage_type === "deposit" ? "bg-blue-200"
                   : r.usage_type === "withdraw" ? "bg-red-200"
                   : "bg-white";
                 return (
