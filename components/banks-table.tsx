@@ -127,6 +127,25 @@ function normalizeRole(r?: string | null): AnyRole {
   return "other";
 }
 
+function useSubmitGuard() {
+  const lockRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const run = useCallback(async <T,>(fn: () => Promise<T> | T) => {
+    if (lockRef.current) return; // sudah terkunci → abaikan submit berikutnya
+    lockRef.current = true;
+    setSubmitting(true);
+    try {
+      return await fn();
+    } finally {
+      setSubmitting(false);
+      lockRef.current = false;
+    }
+  }, []);
+
+  return { submitting, run };
+}
+
 export default function BanksTable() {
   const supabase = supabaseBrowser();
 
@@ -137,6 +156,22 @@ export default function BanksTable() {
   const [loading, setLoading] = useState(true);
   const [tenantName, setTenantName] = useState<string>("");
   const [tenantCredit, setTenantCredit] = useState<number>(0);
+
+  // ====== Guard Submit ======
+  const dpGuard = useSubmitGuard();
+  const wdGuard = useSubmitGuard();
+  const pdpGuard = useSubmitGuard();
+  const ttGuard = useSubmitGuard();
+  const adjGuard = useSubmitGuard();
+  const expenseGuard = useSubmitGuard();
+
+  // (opsional)
+  const newGuard = useSubmitGuard();        // untuk New Bank
+  const settingGuard = useSubmitGuard();    // untuk Save Setting
+  const isSubmittingAny =
+    dpGuard.submitting || wdGuard.submitting || pdpGuard.submitting ||
+    ttGuard.submitting || adjGuard.submitting || expenseGuard.submitting ||
+    newGuard.submitting || settingGuard.submitting;
 
   // ====== setting potongan langsung -> dampak credit tenant ======
   const [showSetting, setShowSetting] = useState(false);
@@ -996,14 +1031,13 @@ export default function BanksTable() {
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
           onMouseDown={(e) => {
+            if (dpGuard.submitting) return;
             if (e.currentTarget === e.target) closeDP();
           }}
         >
           <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitDP();
-            }}
+            onSubmit={(e) => { e.preventDefault(); dpGuard.run(submitDP); }}
+            onKeyDown={(e) => { if (dpGuard.submitting && e.key === "Enter") e.preventDefault(); }}
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
             <div className="p-4 border-b">
@@ -1124,14 +1158,19 @@ export default function BanksTable() {
                 type="button"
                 onClick={closeDP}
                 className="rounded px-4 py-2 bg-gray-100"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
               >
                 Close
               </button>
               <button
                 type="submit"
-                className="rounded px-4 py-2 bg-blue-600 text-white"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
+                title={dpGuard.submitting ? "Submitting..." : "Submit"}
               >
-                Submit
+                {dpGuard.submitting ? "Submitting…" : "Submit"}
               </button>
             </div>
           </form>
@@ -1143,14 +1182,13 @@ export default function BanksTable() {
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
           onMouseDown={(e) => {
+            if (dpGuard.submitting) return;
             if (e.currentTarget === e.target) closeWD();
           }}
         >
           <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitWD();
-            }}
+            onSubmit={(e) => { e.preventDefault(); dpGuard.run(submitWD); }}
+            onKeyDown={(e) => { if (dpGuard.submitting && e.key === "Enter") e.preventDefault(); }}
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
             <div className="p-4 border-b">
@@ -1310,14 +1348,19 @@ export default function BanksTable() {
                 type="button"
                 onClick={closeWD}
                 className="rounded px-4 py-2 bg-gray-100"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
               >
                 Close
               </button>
               <button
                 type="submit"
-                className="rounded px-4 py-2 bg-blue-600 text-white"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
+                title={dpGuard.submitting ? "Submitting..." : "Submit"}
               >
-                Submit
+                {dpGuard.submitting ? "Submitting…" : "Submit"}
               </button>
             </div>
           </form>
@@ -1329,14 +1372,13 @@ export default function BanksTable() {
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
           onMouseDown={(e) => {
+            if (dpGuard.submitting) return;
             if (e.currentTarget === e.target) closePDP();
           }}
         >
           <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitPDP();
-            }}
+            onSubmit={(e) => { e.preventDefault(); dpGuard.run(submitPDP); }}
+            onKeyDown={(e) => { if (dpGuard.submitting && e.key === "Enter") e.preventDefault(); }}
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
             <div className="p-4 border-b">
@@ -1403,14 +1445,19 @@ export default function BanksTable() {
                 type="button"
                 onClick={closePDP}
                 className="rounded px-4 py-2 bg-gray-100"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
               >
                 Close
               </button>
               <button
                 type="submit"
-                className="rounded px-4 py-2 bg-blue-600 text-white"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
+                title={dpGuard.submitting ? "Submitting..." : "Submit"}
               >
-                Submit
+                {dpGuard.submitting ? "Submitting…" : "Submit"}
               </button>
             </div>
           </form>
@@ -1422,14 +1469,13 @@ export default function BanksTable() {
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
           onMouseDown={(e) => {
+            if (dpGuard.submitting) return;
             if (e.currentTarget === e.target) closeTT();
           }}
         >
           <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitTT();
-            }}
+            onSubmit={(e) => { e.preventDefault(); dpGuard.run(submitTT); }}
+            onKeyDown={(e) => { if (dpGuard.submitting && e.key === "Enter") e.preventDefault(); }}
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
             <div className="p-4 border-b">
@@ -1558,14 +1604,19 @@ export default function BanksTable() {
                 type="button"
                 onClick={closeTT}
                 className="rounded px-4 py-2 bg-gray-100"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
               >
                 Close
               </button>
               <button
                 type="submit"
-                className="rounded px-4 py-2 bg-blue-600 text-white"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
+                title={dpGuard.submitting ? "Submitting..." : "Submit"}
               >
-                Submit
+                {dpGuard.submitting ? "Submitting…" : "Submit"}
               </button>
             </div>
           </form>
@@ -1576,10 +1627,14 @@ export default function BanksTable() {
       {showAdj && adjBank && (
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
-          onMouseDown={(e)=>{ if(e.currentTarget===e.target) closeAdj(); }}
+          onMouseDown={(e)=>{
+            if (dpGuard.submitting) return;
+            if(e.currentTarget===e.target) closeAdj();
+          }}
         >
           <form
-            onSubmit={(e)=>{ e.preventDefault(); submitAdj(); }}
+            onSubmit={(e) => { e.preventDefault(); dpGuard.run(submitAdj); }}
+            onKeyDown={(e) => { if (dpGuard.submitting && e.key === "Enter") e.preventDefault(); }}
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
             <div className="p-4 border-b">
@@ -1636,8 +1691,24 @@ export default function BanksTable() {
             </div>
 
             <div className="border-t p-4 flex justify-end gap-2">
-              <button type="button" onClick={closeAdj} className="rounded px-4 py-2 bg-gray-100">Close</button>
-              <button type="submit" className="rounded px-4 py-2 bg-blue-600 text-white">Submit</button>
+              <button
+                type="button"
+                onClick={closeAdj}
+                className="rounded px-4 py-2 bg-gray-100"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
+              >
+                Close
+              </button>
+              <button
+                type="submit"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
+                title={dpGuard.submitting ? "Submitting..." : "Submit"}
+              >
+                {dpGuard.submitting ? "Submitting…" : "Submit"}
+              </button>
             </div>
           </form>
         </div>
@@ -1647,10 +1718,14 @@ export default function BanksTable() {
       {showExpense && expenseBank && (
         <div
           className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
-          onMouseDown={(e)=>{ if(e.currentTarget===e.target) closeExpense(); }}
+          onMouseDown={(e)=>{
+            if (dpGuard.submitting) return;
+            if(e.currentTarget===e.target) closeExpense();
+          }}
         >
           <form
-            onSubmit={(e)=>{ e.preventDefault(); submitExpense(); }}
+            onSubmit={(e) => { e.preventDefault(); dpGuard.run(submitExpense); }}
+            onKeyDown={(e) => { if (dpGuard.submitting && e.key === "Enter") e.preventDefault(); }}
             className="bg-white rounded border w-full max-w-2xl mt-10"
           >
             <div className="p-4 border-b">
@@ -1719,8 +1794,24 @@ export default function BanksTable() {
             </div>
 
             <div className="border-t p-4 flex justify-end gap-2">
-              <button type="button" onClick={closeExpense} className="rounded px-4 py-2 bg-gray-100">Close</button>
-              <button type="submit" className="rounded px-4 py-2 bg-blue-600 text-white">Submit</button>
+              <button
+                type="button"
+                onClick={closeExpense}
+                className="rounded px-4 py-2 bg-gray-100"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
+              >
+                Close
+              </button>
+              <button
+                type="submit"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
+                title={dpGuard.submitting ? "Submitting..." : "Submit"}
+              >
+                {dpGuard.submitting ? "Submitting…" : "Submit"}
+              </button>
             </div>
           </form>
         </div>
