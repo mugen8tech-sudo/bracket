@@ -31,6 +31,7 @@ export default function UserManagement() {
   const supabase = supabaseBrowser();
 
   // guard + header
+  const [authorized, setAuthorized] = useState<"loading"|"ok"|"no">("loading"); // ← admin-only guard
   const [myRole, setMyRole] = useState<MyRole>("other");
   const [tenantName, setTenantName] = useState("");
   const [tenantId, setTenantId] = useState("");
@@ -90,11 +91,11 @@ export default function UserManagement() {
     return () => document.removeEventListener("keydown", onKey);
   }, [showNew, showEdit, showPwd, showResign]); // :contentReference[oaicite:1]{index=1}
 
-  /** ====== Bootstrap: ambil role & tenant name ====== */
+  /** ====== Bootstrap: cek role (admin-only) & tenant name ====== */
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) { setAuthorized("no"); return; }
 
       const { data: prof } = await supabase
         .from("profiles")
@@ -102,9 +103,13 @@ export default function UserManagement() {
         .eq("user_id", user.id)
         .single();
 
+      const role = normalizeRole(prof?.role);
+      if (role !== "admin") { setAuthorized("no"); return; }
+      setAuthorized("ok");
+      setMyRole(role);
+
       const tid = prof?.tenant_id ?? "";
       setTenantId(tid);
-      setMyRole(normalizeRole(prof?.role));
 
       if (tid) {
         const { data: t } = await supabase
@@ -139,7 +144,11 @@ export default function UserManagement() {
     setPage(pageToLoad);
   };
 
-  useEffect(() => { load(1); /* initial */ }, /* eslint-disable-line */ []);
+  // Load list hanya setelah authorized === "ok"
+  useEffect(() => {
+    if (authorized === "ok") load(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authorized]);
 
   const applySearch: React.FormEventHandler = (e) => { e.preventDefault(); load(1); };
 
@@ -242,6 +251,17 @@ export default function UserManagement() {
     await load(page);
   };
 
+  /** ====== Guard render ====== */
+  if (authorized === "loading") return <div className="p-6">Loading…</div>;
+  if (authorized === "no") {
+    return (
+      <div className="p-6">
+        <div className="text-red-600 font-semibold mb-2">Unauthorized</div>
+        <div>Halaman ini hanya untuk Admin.</div>
+      </div>
+    );
+  }
+  
   /** ====== Render ====== */
   return (
     <div className="space-y-3">
