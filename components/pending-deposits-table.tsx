@@ -5,7 +5,7 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
 /* ========= Helpers ========= */
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 
 function todayJakartaYmd() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
