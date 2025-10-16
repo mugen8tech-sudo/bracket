@@ -31,15 +31,12 @@ export async function POST(req: NextRequest) {
     const newUser = created.user!;
     const uid = newUser.id;
 
-    // 2) Jika trigger sudah membuat row profiles, pastikan tetap tenant yang sama
-    const { data: existing } = await supabaseAdmin
-      .from("profiles")
-      .select("tenant_id")
-      .eq("user_id", uid)
-      .maybeSingle();
-
-    if (existing && existing.tenant_id && existing.tenant_id !== tenantId) {
-      return new Response("Akun sudah terhubung ke tenant lain.", { status: 409 });
+    // Pastikan app_metadata.tenant_id = tenant admin (kalau belum)
+    const metaTenant = (newUser.app_metadata as any)?.tenant_id;
+    if (metaTenant !== tenantId) {
+      await supabaseAdmin.auth.admin.updateUserById(uid, {
+        app_metadata: { ...(newUser.app_metadata as any), tenant_id: tenantId },
+      } as any);
     }
 
     // 3) UPSERT supaya idempotent (hindari duplicate key pkey)
