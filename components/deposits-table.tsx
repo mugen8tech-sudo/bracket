@@ -83,7 +83,7 @@ export default function DepositsTable() {
 
     const { data, error } = await supabase
       .from("deposits")
-      .select("amount_net, username, status")
+      .select("amount_gross, username, status")
       .gte("txn_at", s)
       .lte("txn_at", e)
       .eq("status", "posted");
@@ -92,8 +92,8 @@ export default function DepositsTable() {
       console.error(error);
       return;
     }
-    const list = ((data ?? []) as { amount_net: number; username: string }[]) || [];
-    setSumToday(list.reduce((a, b) => a + Number(b.amount_net || 0), 0));
+    const list = ((data ?? []) as { amount_gross: number; username: string }[]) || [];
+    setSumToday(list.reduce((a, b) => a + Number(b.amount_gross || 0), 0));
     setCountToday(list.length);
     setPlayersToday(new Set(list.map((x) => x.username)).size);
   };
@@ -257,7 +257,7 @@ export default function DepositsTable() {
       const to = Math.min(from + SUMMARY_BATCH - 1, totalMatched - 1);
       let q = supabase
         .from("deposits")
-        .select("amount_net, username")
+        .select("amount_gross, username")
         .order("txn_at", { ascending: false })
         .range(from, to);
       if (leadIds) q = q.in("lead_id", leadIds);
@@ -271,8 +271,8 @@ export default function DepositsTable() {
         alert(error.message);
         return;
       }
-      const list = ((data ?? []) as { amount_net: number; username: string }[]) || [];
-      sum += list.reduce((a, b) => a + Number(b.amount_net || 0), 0);
+      const list = ((data ?? []) as { amount_gross: number; username: string }[]) || [];
+      sum += list.reduce((a, b) => a + Number(b.amount_gross || 0), 0);
       // normalisasi agar 'Tester' dan 'tester' dianggap 1 pemain
       list.forEach((x) => players.add((x.username ?? "").trim().toLowerCase()));
       from += SUMMARY_BATCH;
@@ -459,7 +459,7 @@ export default function DepositsTable() {
                   </td>
                   <td>{r.username}</td>
                   {/* Amount rata kiri */}
-                  <td className="text-left">{formatAmount(r.amount_net)}</td>
+                  <td className="text-left">{formatAmount(r.amount_gross)}</td>
                   <td>
                     {new Date(r.txn_at).toLocaleString("id-ID", {
                       timeZone: "Asia/Jakarta",
