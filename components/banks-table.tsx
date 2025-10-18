@@ -286,6 +286,7 @@ export default function BanksTable() {
     setLeadOptions([]);
     setLeadPicked(null);
     setLeadIndex(0);
+    setLeadDropdownOpen(false); // NEW
   };
 
   const closePDP = useCallback(() => setShowPDP(false), []);
@@ -1298,58 +1299,74 @@ export default function BanksTable() {
               <div>
                 <label className="block text-xs mb-1">Player</label>
                 <div className="relative">
-                  <input
-                    ref={playerInputRef}
-                    className="border rounded px-3 py-2 w-full"
-                    placeholder="search username"
-                    value={leadPicked ? (leadPicked.username ?? "") : leadQuery}
-                    onChange={(e) => {
-                      setLeadPicked(null);
-                      setLeadQuery(e.target.value);
+                  <button
+                    type="button"
+                    className="border rounded px-3 py-2 w-full text-left"
+                    onClick={() => {
+                      setLeadDropdownOpen((o) => !o);
+                      setTimeout(() => playerInputRef.current?.focus(), 0);
                     }}
-                    onKeyDown={(e) => {
-                      if (!leadPicked && leadOptions.length > 0) {
-                        if (e.key === "ArrowDown") {
-                          e.preventDefault();
-                          setLeadIndex((i) =>
-                            Math.min(i + 1, leadOptions.length - 1)
-                          );
-                          return;
-                        }
-                        if (e.key === "ArrowUp") {
-                          e.preventDefault();
-                          setLeadIndex((i) => Math.max(i - 1, 0));
-                          return;
-                        }
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          const pick = leadOptions[Math.max(0, leadIndex)];
-                          if (pick) {
-                            setLeadPicked(pick);
-                            setLeadOptions([]);
-                          }
-                          return;
-                        }
-                      }
-                    }}
-                  />
-                  {!leadPicked && leadOptions.length > 0 && (
-                    <div className="absolute z-10 mt-1 max-h-56 overflow-auto w-full border bg-white rounded shadow">
-                      {leadOptions.map((opt, idx) => (
-                        <div
-                          key={opt.id}
-                          onClick={() => {
-                            setLeadPicked(opt);
-                            setLeadOptions([]);
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0">
+                        {leadPicked ? (
+                          <>
+                            <div className="font-mono truncate">{leadPicked.username}</div>
+                            <div className="text-xs text-gray-600 truncate">
+                              {(leadPicked.bank ?? leadPicked.bank_name) || "-"} • {leadPicked.name || "-"} • {leadPicked.bank_no || "-"}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-gray-500">Pilih Player</span>
+                        )}
+                      </div>
+                      <span className="ml-2">▾</span>
+                    </div>
+                  </button>
+
+                  {leadDropdownOpen && (
+                    <div className="absolute z-10 mt-1 w-full border bg-white rounded shadow">
+                      <div className="p-2 border-b">
+                        <input
+                          ref={playerInputRef}
+                          className="border rounded px-3 py-2 w-full"
+                          placeholder="search username"
+                          value={leadQuery}
+                          onChange={(e) => { setLeadQuery(e.target.value); setLeadIndex(0); }}
+                          onKeyDown={(e) => {
+                            e.stopPropagation();
+                            if (e.key === "ArrowDown" && leadOptions.length > 0) { e.preventDefault(); setLeadIndex((i) => Math.min(i + 1, leadOptions.length - 1)); return; }
+                            if (e.key === "ArrowUp"   && leadOptions.length > 0) { e.preventDefault(); setLeadIndex((i) => Math.max(i - 1, 0)); return; }
+                            if (e.key === "Enter"     && leadOptions.length > 0) {
+                              e.preventDefault();
+                              const pick = leadOptions[Math.max(0, leadIndex)];
+                              if (pick) { setLeadPicked(pick); setLeadOptions([]); setLeadDropdownOpen(false); setLeadQuery(""); }
+                              return;
+                            }
+                            if (e.key === "Escape") { e.preventDefault(); setLeadDropdownOpen(false); }
                           }}
-                          className={`px-3 py-2 cursor-pointer text-sm hover:bg-gray-100 ${
-                            idx === leadIndex ? "bg-blue-50" : ""
-                          }`}
-                        >
-                          {opt.username} ({opt.bank ?? opt.bank_name} |{" "}
-                          {opt.name} | {opt.bank_no})
-                        </div>
-                      ))}
+                        />
+                      </div>
+
+                      <div className="max-h-56 overflow-auto" role="listbox" aria-label="Hasil pencarian player">
+                        {leadOptions.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-gray-500">Ketik untuk mencari…</div>
+                        ) : (
+                          leadOptions.map((opt, idx) => (
+                            <div
+                              key={opt.id}
+                              role="option"
+                              onClick={() => { setLeadPicked(opt); setLeadOptions([]); setLeadDropdownOpen(false); setLeadQuery(""); }}
+                              className={`px-3 py-2 cursor-pointer text-sm hover:bg-gray-100 ${idx === leadIndex ? "bg-blue-50" : ""}`}
+                            >
+                              <div className="font-mono">{opt.username}</div>
+                              <div className="text-xs text-gray-600">
+                                {(opt.bank ?? opt.bank_name) || "-"} • {opt.name || "-"} • {opt.bank_no || "-"}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
