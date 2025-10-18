@@ -1103,116 +1103,102 @@ export default function BanksTable() {
               <div>
                 <label className="block text-xs mb-1">Player</label>
                 <div className="relative">
-                  {!leadPicked ? (
-                    <>
-                      {/* Trigger dropdown yang tampil seperti <select> */}
-                      <button
-                        type="button"
-                        className="border rounded px-3 py-2 w-full text-left flex items-center justify-between"
-                        onClick={() => {
-                          setLeadDropdownOpen((o) => !o);
-                          setTimeout(() => playerInputRef.current?.focus(), 0);
-                        }}
-                      >
-                        <span className="truncate">
-                          {leadQuery ? `Cari: ${leadQuery}` : "Pilih Player"}
-                        </span>
-                        <span className="ml-2">▾</span>
-                      </button>
-
-                      {/* Panel dropdown berisi kolom search + list hasil */}
-                      {leadDropdownOpen && (
-                        <div className="absolute z-10 mt-1 w-full border bg-white rounded shadow">
-                          <div className="p-2 border-b">
-                            <input
-                              ref={playerInputRef}
-                              className="border rounded px-3 py-2 w-full"
-                              placeholder="search username"
-                              value={leadQuery}
-                              onChange={(e) => {
-                                setLeadQuery(e.target.value);
-                                setLeadIndex(0);
-                              }}
-                              onKeyDown={(e) => {
-                                if (leadOptions.length > 0) {
-                                  if (e.key === "ArrowDown") {
-                                    e.preventDefault();
-                                    setLeadIndex((i) => Math.min(i + 1, leadOptions.length - 1));
-                                    return;
-                                  }
-                                  if (e.key === "ArrowUp") {
-                                    e.preventDefault();
-                                    setLeadIndex((i) => Math.max(i - 1, 0));
-                                    return;
-                                  }
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    const pick = leadOptions[Math.max(0, leadIndex)];
-                                    if (pick) {
-                                      setLeadPicked(pick);
-                                      setLeadOptions([]);
-                                      setLeadDropdownOpen(false);
-                                    }
-                                    return;
-                                  }
-                                }
-                                if (e.key === "Escape") {
-                                  e.preventDefault();
-                                  setLeadDropdownOpen(false);
-                                }
-                              }}
-                            />
-                          </div>
-
-                          <div className="max-h-56 overflow-auto" role="listbox" aria-label="Hasil pencarian player">
-                            {leadOptions.length === 0 ? (
-                              <div className="px-3 py-2 text-sm text-gray-500">Tidak ada hasil</div>
-                            ) : (
-                              leadOptions.map((opt, idx) => (
-                                <div
-                                  key={opt.id}
-                                  role="option"
-                                  onClick={() => {
-                                    setLeadPicked(opt);
-                                    setLeadOptions([]);
-                                    setLeadDropdownOpen(false);
-                                  }}
-                                  className={`px-3 py-2 cursor-pointer text-sm hover:bg-gray-100 ${
-                                    idx === leadIndex ? "bg-blue-50" : ""
-                                  }`}
-                                >
-                                  <div className="font-mono">{opt.username}</div>
-                                  <div className="text-xs text-gray-600">
-                                    {(opt.bank ?? opt.bank_name) || "-"} • {opt.name || "-"} • {opt.bank_no || "-"}
-                                  </div>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    // Setelah dipilih → tampilkan kartu ringkas, menggantikan dropdown
-                    <div className="border rounded px-3 py-2 bg-gray-50">
-                      <div className="font-semibold">{leadPicked.username}</div>
-                      <div className="text-xs text-gray-600">
-                        {(leadPicked.bank ?? leadPicked.bank_name) || "-"} • {leadPicked.name || "-"} • {leadPicked.bank_no || "-"}
+                  {/* Trigger dropdown – SELALU ADA. Menampilkan pilihan bila sudah ada */}
+                  <button
+                    type="button"
+                    className="border rounded px-3 py-2 w-full text-left"
+                    onClick={() => {
+                      setLeadDropdownOpen((o) => !o);
+                      setTimeout(() => playerInputRef.current?.focus(), 0);
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0">
+                        {leadPicked ? (
+                          <>
+                            <div className="font-mono truncate">{leadPicked.username}</div>
+                            <div className="text-xs text-gray-600 truncate">
+                              {(leadPicked.bank ?? leadPicked.bank_name) || "-"} • {leadPicked.name || "-"} • {leadPicked.bank_no || "-"}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-gray-500">Pilih Player</span>
+                        )}
                       </div>
-                      <button
-                        type="button"
-                        className="mt-2 text-blue-600 underline text-xs"
-                        onClick={() => {
-                          setLeadPicked(null);
-                          setLeadQuery("");
-                          setLeadOptions([]);
-                          setLeadIndex(0);
-                          setLeadDropdownOpen(true);
-                          setTimeout(() => playerInputRef.current?.focus(), 0);
-                        }}
-                      >
-                        Ganti Player
-                      </button>
+                      <span className="ml-2">▾</span>
+                    </div>
+                  </button>
+
+                  {/* Panel dropdown: kolom search + list hasil */}
+                  {leadDropdownOpen && (
+                    <div className="absolute z-10 mt-1 w-full border bg-white rounded shadow">
+                      <div className="p-2 border-b">
+                        <input
+                          ref={playerInputRef}
+                          className="border rounded px-3 py-2 w-full"
+                          placeholder="search username"
+                          value={leadQuery}
+                          onChange={(e) => {
+                            setLeadQuery(e.target.value);
+                            setLeadIndex(0);
+                          }}
+                          onKeyDown={(e) => {
+                            e.stopPropagation();
+                            if (e.key === "ArrowDown" && leadOptions.length > 0) {
+                              e.preventDefault();
+                              setLeadIndex((i) => Math.min(i + 1, leadOptions.length - 1));
+                              return;
+                            }
+                            if (e.key === "ArrowUp" && leadOptions.length > 0) {
+                              e.preventDefault();
+                              setLeadIndex((i) => Math.max(i - 1, 0));
+                              return;
+                            }
+                            if (e.key === "Enter" && leadOptions.length > 0) {
+                              e.preventDefault();
+                              const pick = leadOptions[Math.max(0, leadIndex)];
+                              if (pick) {
+                                setLeadPicked(pick);
+                                setLeadOptions([]);
+                                setLeadDropdownOpen(false);
+                                setLeadQuery(""); // opsional: kosongkan field search
+                              }
+                              return;
+                            }
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              setLeadDropdownOpen(false);
+                            }
+                          }}
+                        />
+                      </div>
+
+                      <div className="max-h-56 overflow-auto" role="listbox" aria-label="Hasil pencarian player">
+                        {leadOptions.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-gray-500">Ketik untuk mencari…</div>
+                        ) : (
+                          leadOptions.map((opt, idx) => (
+                            <div
+                              key={opt.id}
+                              role="option"
+                              onClick={() => {
+                                setLeadPicked(opt);
+                                setLeadOptions([]);
+                                setLeadDropdownOpen(false);
+                                setLeadQuery("");
+                              }}
+                              className={`px-3 py-2 cursor-pointer text-sm hover:bg-gray-100 ${
+                                idx === leadIndex ? "bg-blue-50" : ""
+                              }`}
+                            >
+                              <div className="font-mono">{opt.username}</div>
+                              <div className="text-xs text-gray-600">
+                                {(opt.bank ?? opt.bank_name) || "-"} • {opt.name || "-"} • {opt.bank_no || "-"}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
