@@ -4,18 +4,32 @@
 
 html, body { height: 100%; }
 
-/* Base warna light/dark untuk body */
+/* === Base light/dark untuk seluruh halaman === */
 body {
   @apply bg-white text-gray-900 dark:bg-slate-900 dark:text-gray-100;
 }
 
-/* Tabel seperti Excel */
-.table-grid { border-collapse: collapse; width: 100%; }
-.table-grid th, .table-grid td { border: 1px solid #e5e7eb; padding: 0.5rem; }
-.table-grid thead th { background-color: #f9fafb; font-weight: 600; }
-.table-grid thead .filters th { background-color: #ffffff; padding: 0.25rem 0.5rem; }
+/* === Tabel seperti Excel === */
+.table-grid {
+  border-collapse: collapse;
+  width: 100%;
+}
 
-/* Versi dark untuk tabel */
-.dark .table-grid th, .dark .table-grid td { border-color: #374151; }           /* gray-700 */
-.dark .table-grid thead th { background-color: #1f2937; }                      /* gray-800 */
-.dark .table-grid thead .filters th { background-color: #111827; }             /* gray-900 */
+.table-grid th,
+.table-grid td {
+  /* semula: border: 1px solid #e5e7eb; */
+  @apply border border-gray-200 dark:border-slate-700;
+  padding: 0.5rem;
+}
+
+.table-grid thead th {
+  /* semula: background-color: #f9fafb; */
+  @apply bg-gray-50 dark:bg-slate-800;
+  font-weight: 600;
+}
+
+.table-grid thead .filters th {
+  /* semula: background-color: #ffffff; */
+  @apply bg-white dark:bg-slate-900;
+  padding: 0.25rem 0.5rem;
+}
