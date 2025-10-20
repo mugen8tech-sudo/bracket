@@ -459,7 +459,7 @@ export default function DepositsTable() {
               <th className="text-left w-52">Tgl (dipilih)</th>
               <th className="text-left w-32">By</th>
               <th className="text-left w-24">Reversed?</th>
-              <th className="text-left w-40">Action</th>
+              <th className="text-left w-56 min-w-[13rem]">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -488,21 +488,23 @@ export default function DepositsTable() {
                   </td>
                   <td>{r.created_by_name ?? r.created_by ?? "-"}</td>
                   <td>{r.status === "reversed" ? "YES" : "NO"}</td>
-                  <td className="space-x-2">
-                    <Link
-                      href={`/deposits/${r.id}`}
-                      className="rounded bg-gray-100 px-3 py-1"
-                    >
-                      Detail
-                    </Link>
-                    {r.status !== "reversed" && (
-                      <button
-                        onClick={() => openDelete(r)}
-                        className="rounded bg-red-600 text-white px-3 py-1"
+                  <td className="whitespace-nowrap">
+                    <div className="inline-flex items-center gap-2">
+                      <Link
+                        href={`/deposits/${r.id}`}
+                        className="rounded bg-gray-100 px-3 py-1 shrink-0"
                       >
-                        Delete
-                      </button>
-                    )}
+                        Detail
+                      </Link>
+                      {r.status !== "reversed" && (
+                        <button
+                          onClick={() => openDelete(r)}
+                          className="rounded bg-red-600 text-white px-3 py-1 shrink-0"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))
