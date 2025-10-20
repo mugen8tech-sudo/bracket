@@ -459,7 +459,7 @@ export default function DepositsTable() {
               <th className="text-left w-52">Tgl (dipilih)</th>
               <th className="text-left w-32">By</th>
               <th className="text-left w-24">Reversed?</th>
-              <th className="text-left w-50 min-w-[13rem]">Action</th>
+              <th className="text-left w-44 min-w-[13rem]">Action</th>
             </tr>
           </thead>
           <tbody>
