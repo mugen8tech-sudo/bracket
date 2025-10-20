@@ -4,32 +4,24 @@
 
 html, body { height: 100%; }
 
-/* === Base light/dark untuk seluruh halaman === */
-body {
-  @apply bg-white text-gray-900 dark:bg-slate-900 dark:text-gray-100;
-}
-
-/* === Tabel seperti Excel === */
+/* === Gaya tabel seperti Excel untuk semua halaman === */
 .table-grid {
-  border-collapse: collapse;
+  border-collapse: collapse;              /* rapat seperti excel */
   width: 100%;
 }
 
 .table-grid th,
 .table-grid td {
-  /* semula: border: 1px solid #e5e7eb; */
-  @apply border border-gray-200 dark:border-slate-700;
-  padding: 0.5rem;
+  border: 1px solid #e5e7eb;             /* gray-200 */
+  padding: 0.5rem;                        /* p-2 */
 }
 
 .table-grid thead th {
-  /* semula: background-color: #f9fafb; */
-  @apply bg-gray-50 dark:bg-slate-800;
+  background-color: #f9fafb;             /* gray-50 */
   font-weight: 600;
 }
 
 .table-grid thead .filters th {
-  /* semula: background-color: #ffffff; */
-  @apply bg-white dark:bg-slate-900;
-  padding: 0.25rem 0.5rem;
+  background-color: #ffffff;              /* baris filter putih */
+  padding: 0.25rem 0.5rem;                /* lebih rapat */
 }
