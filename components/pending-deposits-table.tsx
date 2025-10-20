@@ -345,7 +345,7 @@ export default function PendingDepositsTable() {
               <col style={{ width: "12%" }} />
               <col style={{ width: "16%" }} />
               <col style={{ width: "10%" }} />
-              <col style={{ width: "12%" }} />
+              <col style={{ width: "10rem" }} />
             </colgroup>
 
             <thead>
@@ -384,9 +384,9 @@ export default function PendingDepositsTable() {
                   </select>
                 </th>
                 <th>
-                  <button type="submit" className="rounded bg-blue-600 text-white px-3 py-1">
-                    submit
-                  </button>
+                  <th className="whitespace-nowrap">
+                    <button type="submit" className="rounded bg-blue-600 text-white px-3 py-1">submit</button>
+                  </th>
                 </th>
               </tr>
 
@@ -397,7 +397,7 @@ export default function PendingDepositsTable() {
                 <th className="text-left">Amount</th>
                 <th className="text-left">Tgl</th>
                 <th className="text-left">Status</th>
-                <th className="text-left">Action</th>
+                <th className="text-left min-w-[10rem]">Action</th>
               </tr>
             </thead>
 
@@ -424,17 +424,17 @@ export default function PendingDepositsTable() {
                         {r.assigned_deposit_id ? "Sudah di Assign" : "Sudah di Delete"}
                       </span>
                     ) : (
-                      <div className="flex items-center gap-2">
+                      <div className="inline-flex items-center gap-2 whitespace-nowrap">
                         <button
                           type="button"
-                          className="rounded bg-blue-600 text-white px-3 py-1"
+                          className="rounded bg-blue-600 text-white px-3 py-1 shrink-0"
                           onClick={() => openAssign(r)}
                         >
                           Assign
                         </button>
                         <button
                           type="button"
-                          className="rounded bg-red-600 text-white px-3 py-1"
+                          className="rounded bg-red-600 text-white px-3 py-1 shrink-0"
                           onClick={() => openDelete(r)}
                         >
                           Delete
@@ -469,7 +469,7 @@ export default function PendingDepositsTable() {
                           .replace(":", ".")}
                       </td>
                       <td>{statusLabel}</td>
-                      <td>{actionEl}</td>
+                      <td className="whitespace-nowrap">{actionEl}</td>
                     </tr>
                   );
                 })
