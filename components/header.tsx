@@ -1,5 +1,6 @@
 import { supabaseServer } from "@/lib/supabase-server";
 import UserMenu from "@/components/user-menu";
+import ThemeToggle from "@/components/theme-toggle";
 
 export default async function Header() {
   const supabase = supabaseServer();
@@ -20,6 +21,7 @@ export default async function Header() {
       <div className="px-4 h-14 flex items-center justify-between">
         <div className="font-semibold">Bracket BANK</div>
         <div className="flex items-center gap-4">
+          <ThemeToggle />            {/* ⬅️ tombol dark mode */}
           <UserMenu fullName={fullName} />
         </div>
       </div>
