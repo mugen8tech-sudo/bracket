@@ -344,7 +344,7 @@ export default function PendingDepositsTable() {
               <col style={{ width: "43%" }} />
               <col style={{ width: "12%" }} />
               <col style={{ width: "16%" }} />
-              <col style={{ width: "10%" }} />
+              <col style={{ width: "10rem" }} />
               <col style={{ width: "10rem" }} />
             </colgroup>
 
@@ -396,7 +396,7 @@ export default function PendingDepositsTable() {
                 <th className="text-left">Bank</th>
                 <th className="text-left">Amount</th>
                 <th className="text-left">Tgl</th>
-                <th className="text-left">Status</th>
+                <th className="text-left min-w-[10rem]>Status</th>
                 <th className="text-left min-w-[10rem]">Action</th>
               </tr>
             </thead>
