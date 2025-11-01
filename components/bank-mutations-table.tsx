@@ -12,7 +12,8 @@ type MutationKind =
   | "INTERBANK_OUT" | "INTERBANK_IN"
   | "ADJUSTMENT"
   | "EXPENSE"         // transfer fee (legacy)
-  | "BANK_EXPENSE";   // expense operasional (baru)
+  | "BANK_EXPENSE"   // expense operasional (baru)
+  | "SETTLEMENT";
 
 type BankMutationRow = {
   id: number;
@@ -47,6 +48,7 @@ const CAT_OPTIONS = [
   { key: "ADJ",          label: "Adjustment" },
   { key: "EXPENSE",      label: "Expense" },          // khusus Expenses umum
   { key: "TRANSFER_FEE", label: "Biaya Transaksi" },  // EXPENSE fee (DP/WD/TT)
+  { key: "AKURAN",       label: "Akuran" },
 ] as const;
 type CatKey = typeof CAT_OPTIONS[number]["key"];
 
@@ -57,6 +59,7 @@ function kindsForCat(cat: CatKey): MutationKind[] | "EXPENSE_TRANSFER" | "ALL" {
     case "PENDING_DP": return ["PENDING_DEPOSIT", "REVERSAL_PENDING_DEPOSIT", "REVERSAL_DEPOSIT"]; // ambil dulu, nanti pasca-filter
     case "SESAMA_CM":  return ["INTERBANK_OUT", "INTERBANK_IN"];
     case "ADJ":        return ["ADJUSTMENT"];
+    case "AKURAN":        return ["SETTLEMENT"];
     case "EXPENSE":       return ["BANK_EXPENSE"];     // Expense operasional
     case "TRANSFER_FEE":  return "EXPENSE_TRANSFER";   // HANYA fee (EXPENSE)
     default:           return "ALL";
@@ -138,6 +141,15 @@ function reasonFromReversalPdpDesc(desc?: string | null) {
   return raw;
 }
 
+// Pisahkan deskripsi settlement: "<note> | target: ..."
+// return { note: "TES AKURAN", target: "target: OTHER TRC 20 / 123..." }
+function splitSettlementMeta(raw?: string | null) {
+  const s = (raw ?? "").trim();
+  if (!s) return { note: "", target: "" };
+  const m = s.match(/^(.*?)(?:\s*\|\s*(target\s*:\s*.+))?$/i);
+  return { note: (m?.[1] ?? "").trim(), target: (m?.[2] ?? "").trim() };
+}
+
 /** ================= Komponen ================= **/
 export default function BankMutationsTable() {
   const supabase = supabaseBrowser();
@@ -157,6 +169,7 @@ export default function BankMutationsTable() {
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({});
   const [ttDescMap, setTtDescMap] = useState<Record<number, string>>({});
   const [expDescMap, setExpDescMap] = useState<Record<number, string>>({});
+  const [settleDescMap, setSettleDescMap] = useState<Record<number, string>>({});
 
   // mapping waktu PDP asal untuk reversal PDP (id reversal -> performed_at PDP asal)
   const [revPdpTimeMap, setRevPdpTimeMap] = useState<Record<number, string>>({});
@@ -459,6 +472,21 @@ export default function BankMutationsTable() {
       setExpDescMap({});
     }
 
+    const stIds = list.filter(r => r.kind === "SETTLEMENT").map(r => r.id);
+    if (stIds.length) {
+      const { data } = await supabase
+        .from("settlements")
+        .select("mutation_id, description")
+        .in("mutation_id", stIds);
+      const map: Record<number, string> = {};
+      for (const it of ((data as any[]) ?? [])) {
+        if (it.mutation_id) map[it.mutation_id] = it.description ?? "";
+      }
+      setSettleDescMap(map);
+    } else {
+      setSettleDescMap({});
+    }
+
     setRows(list);
     setTotal(count ?? list.length);
     setPage(pageToLoad);
@@ -516,14 +544,20 @@ export default function BankMutationsTable() {
     if (r.kind === "INTERBANK_OUT" || r.kind === "INTERBANK_IN") return "Sesama CM";
     if (r.kind === "ADJUSTMENT") return "Adjustment";
     if (r.kind === "BANK_EXPENSE") return "Expense";
-    if (r.kind === "EXPENSE") {return isTransferFee(r.description) ? "Biaya Transaksi" : "Expense";}
+    if (r.kind === "EXPENSE") return isTransferFee(r.description) ? "Biaya Transaksi" : "Expense";
     if (r.kind === "PENDING_DEPOSIT" || isReversalOfPDP(r)) return "Pending DP";
     if (r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") return "Depo";
+    if (r.kind === "SETTLEMENT") return "Akuran";      // ⬅️ tambahkan ini
     return "-";
   };
 
   // ===== Info tambahan (username/lead + wording)
   const extraInfo = (r: BankMutationRow): string => {
+    if (r.kind === "SETTLEMENT") {
+      const raw = settleDescMap[r.id] ?? r.description ?? "";
+      const { target } = splitSettlementMeta(raw);
+      return target || "";
+    }
     if (r.kind === "DEPOSIT") {
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
       const leadName = d?.lead_id ? (leadMap[d.lead_id!]?.name ?? "") : "";
@@ -549,16 +583,27 @@ export default function BankMutationsTable() {
     }
     if (r.kind === "EXPENSE" && isTransferFee(r.description)) {
       const s = (r.description || "").toLowerCase();
+
+      // WD fee (tetap)
       if (s.includes("wd")) {
         const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
         const base = s.includes("reversal") ? "Reversal Fee WD dari" : "Fee WD dari";
         return `${base} ${w?.username ?? "-"}`;
       }
-      if (s.includes("tt") || s.includes("interbank")) {
+
+      // ✅ Fee Akuran (deteksi dulu sebelum TT)
+      if (/\bsettlement\b/i.test(s)) {
+        const b = banks.find(x => x.id === r.bank_id);
+        return `Fee Akuran dari ${b ? `[${b.bank_code}] ${b.account_name}` : "-"}`;
+      }
+
+      // ✅ Fee Sesama CM (TT) — pakai helper khusus
+      if (isTtFee(r.description)) {
         const b = banks.find(x => x.id === r.bank_id);
         return `Fee Sesama CM dari ${b ? `[${b.bank_code}] ${b.account_name}` : "-"}`;
       }
-      return `Biaya Transfer`;
+
+      return "Biaya Transfer";
     }
     return r.description ?? "-";
   };
@@ -726,6 +771,8 @@ export default function BankMutationsTable() {
                 const pdpTagStr = pdpTag(r);
                 const tag = revTag ?? pdpTagStr;
                 const descCell = descForRow(r, pdpTagStr);
+                const rawSettle = r.kind === "SETTLEMENT" ? (settleDescMap[r.id] ?? r.description ?? "") : "";
+                const stParts   = r.kind === "SETTLEMENT" ? splitSettlementMeta(rawSettle) : null;
                 return (
                   <tr key={r.id} className="align-top">
                     <td>{r.id}</td>
@@ -741,14 +788,15 @@ export default function BankMutationsTable() {
                       <div className="text-sm text-gray-700">{extraInfo(r)}</div>
                     </td>
                     <td className="whitespace-normal break-words">
-                      {(r.kind === "INTERBANK_OUT" ||
-                        r.kind === "INTERBANK_IN"  ||
-                        (r.kind === "EXPENSE" && isTransferFee(r.description))) // ← pakai helper yang ada
-                        ? (ttDescMap[r.id] ?? "")                                // desc TT (input user)
-                        : (r.kind === "BANK_EXPENSE"
-                            ? (expDescMap[r.id] ?? "")                           // desc Expense (input user)
-                            : (r.description ?? ""))                             // default
-                      }
+                      {r.kind === "SETTLEMENT"
+                        ? (stParts?.note ?? "")                           // ✅ hanya "TES AKURAN"
+                        : (r.kind === "INTERBANK_OUT" ||
+                           r.kind === "INTERBANK_IN"  ||
+                           (r.kind === "EXPENSE" && isTransferFee(r.description)))
+                            ? (ttDescMap[r.id] ?? "")
+                            : (r.kind === "BANK_EXPENSE"
+                                ? (expDescMap[r.id] ?? "")
+                                : (descForRow(r, pdpTagStr)))}
                     </td>
                     <td className="text-right">{formatAmount(r.amount)}</td>
                     <td className="text-right">{formatAmount(r.balance_before)}</td>
