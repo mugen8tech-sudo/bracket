@@ -238,6 +238,23 @@ export default function BanksTable() {
   const [expenseCategory, setExpenseCategory] = useState<string>(EXPENSE_CATEGORY_CODES[0] ?? "");
   const [expenseDesc, setExpenseDesc] = useState<string>("");
 
+  // ====== AKURAN modal ======
+  const [showSettle, setShowSettle] = useState(false);
+  const [settleBank, setSettleBank] = useState<BankRow | null>(null);
+  type EntryOpt = "IN" | "OUT";
+  const [settleEntry, setSettleEntry] = useState<EntryOpt>("IN");
+  const [settleStart, setSettleStart] = useState<string>(""); // optional
+  const [settleEnd, setSettleEnd] = useState<string>("");     // optional
+  const [settleTxnAt, setSettleTxnAt] = useState<string>(nowLocalDatetimeValue());
+  const [settleAmountStr, setSettleAmountStr] = useState<string>("0.00");
+  const [settleFeeStr, setSettleFeeStr] = useState<string>("0.00");
+  const [settleDesc, setSettleDesc] = useState<string>("");
+  const [settleProvider, setSettleProvider] = useState<string>("OTHER");
+  const [settleTargetName, setSettleTargetName] = useState<string>("");
+  const [settleTargetNo, setSettleTargetNo] = useState<string>("");
+  const settleAmountRef = useRef<HTMLInputElement | null>(null);
+  const settleFeeRef = useRef<HTMLInputElement | null>(null);
+
   // player search states (dipakai DP & WD)
   const [leadQuery, setLeadQuery] = useState<string>("");
   const [leadOptions, setLeadOptions] = useState<LeadLite[]>([]);
@@ -334,6 +351,23 @@ export default function BanksTable() {
     setTimeout(()=>expenseAmountRef.current?.select(), 0);
   };
 
+  const closeSettle = useCallback(() => setShowSettle(false), []);
+  const openSettleFor = (b: BankRow) => {
+    setSettleBank(b);
+    setShowSettle(true);
+    setSettleEntry("IN");
+    setSettleStart("");
+    setSettleEnd("");
+    setSettleTxnAt(nowLocalDatetimeValue());
+    setSettleAmountStr("0.00");
+    setSettleFeeStr("0.00");
+    setSettleDesc("");
+    setSettleProvider(BANK_CODES?.[0] ?? "OTHER"); // fallback OTHER kalau tak ada
+    setSettleTargetName("");
+    setSettleTargetNo("");
+    setTimeout(() => settleAmountRef.current?.select(), 0);
+  };
+
   // ESC close (DP/WD/PDP/TT/Setting)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -346,11 +380,12 @@ export default function BanksTable() {
         if (showAdj) closeAdj();
         if (showExpense) closeExpense();
         if (showSetting) setShowSetting(false);
+        if (showSettle) setShowSettle(false);
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [showNew, showDP, showWD, showPDP, showTT, showAdj, showExpense, showSetting, closeNew, closeDP, closeWD, closePDP, closeTT, closeAdj, closeExpense]);
+  }, [showNew, showDP, showWD, showPDP, showTT, showAdj, showExpense, showSettle, showSetting, closeNew, closeDP, closeWD, closePDP, closeTT, closeAdj, closeExpense, closeSettle]);
 
   // Listener event (kompatibel dengan tombol existing yang dispatch "open-bank-new")
   useEffect(() => {
@@ -665,6 +700,50 @@ export default function BanksTable() {
     await load();
   };
 
+  /* ========== Submit AKURAN ========== */
+  const submitSettle = async () => {
+    if (!settleBank) return;
+
+    const amt = toNumber(settleAmountStr);
+    if (!(amt > 0)) {
+      alert("Jumlah harus > 0.");
+      settleAmountRef.current?.focus();
+      return;
+    }
+    const fee = toNumber(settleFeeStr);
+    if (fee < 0) {
+      alert("Biaya Transfer tidak boleh negatif.");
+      settleFeeRef.current?.focus();
+      return;
+    }
+
+    // Admin-only guard (selaras dengan Setting Potongan)
+    if (role !== "admin") {
+      alert("Hanya admin yang bisa input Akuran.");
+      return;
+    }
+
+    const payload = {
+      p_bank_id: settleBank.id,
+      p_entry: settleEntry,                           // "IN" | "OUT"
+      p_amount: amt,                                  // angka absolut; RPC akan sign
+      p_fee: fee,
+      p_description: settleDesc || null,
+      p_target_provider: settleProvider || "OTHER",
+      p_target_account_name: settleTargetName || null,
+      p_target_account_number: settleTargetNo || null,
+      p_start_at: settleStart ? new Date(settleStart).toISOString() : null,
+      p_end_at: settleEnd ? new Date(settleEnd).toISOString() : null,
+      p_txn_at: new Date(settleTxnAt).toISOString(),
+    };
+
+    const { error } = await supabase.rpc("perform_settlement", payload as any);
+    if (error) { alert(error.message); return; }
+
+    closeSettle();
+    await load(); // refresh banks balance + table
+  };
+
   const saveSetting = async () => {
     const {
       data: { user },
@@ -906,6 +985,21 @@ export default function BanksTable() {
                           onClick={() => openExpenseFor(r)}
                         >
                           Biaya
+                        </button>
+                        <button
+                          className="h-8 min-w-[72px] px-3 rounded bg-blue-600 text-white"
+                          title="Akuran (Settlement)"
+                          onClick={() => {
+                            if (role !== "admin") {
+                              alert("Hanya admin yang bisa input Akuran.");
+                              return;
+                            }
+                            openSettleFor(r);
+                          }}
+                          disabled={roleLoading || role !== "admin"}
+                          aria-disabled={roleLoading || role !== "admin"}
+                        >
+                          Akuran
                         </button>
                       </div>
                     </td>
@@ -1919,6 +2013,189 @@ export default function BanksTable() {
                 disabled={dpGuard.submitting}
                 aria-disabled={dpGuard.submitting}
                 title={dpGuard.submitting ? "Submitting..." : "Submit"}
+              >
+                {dpGuard.submitting ? "Submitting…" : "Submit"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ===== Modal AKURAN ===== */}
+      {showSettle && settleBank && (
+        <div
+          className="fixed inset-0 bg-black/30 flex items-start justify-center p-4"
+          onMouseDown={(e) => {
+            if (dpGuard.submitting) return;
+            if (e.currentTarget === e.target) closeSettle();
+          }}
+        >
+          <form
+            onSubmit={(e) => { e.preventDefault(); dpGuard.run(submitSettle); }}
+            onKeyDown={(e) => { if (dpGuard.submitting && e.key === "Enter") e.preventDefault(); }}
+            className="bg-white rounded border w-full max-w-2xl mt-10"
+          >
+            <div className="p-4 border-b">
+              <div className="font-semibold">
+                Akuran @ [{settleBank.bank_code}] {settleBank.account_name} - {settleBank.account_no}
+              </div>
+            </div>
+
+            <div className="p-4 grid md:grid-cols-2 gap-3">
+              {/* KIRI */}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs mb-1">Mulai Akuran</label>
+                  <input
+                    type="datetime-local" step="1"
+                    className="border rounded px-3 py-2 w-full"
+                    value={settleStart}
+                    onChange={(e) => setSettleStart(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs mb-1">Akhir Akuran</label>
+                  <input
+                    type="datetime-local" step="1"
+                    className="border rounded px-3 py-2 w-full"
+                    value={settleEnd}
+                    onChange={(e) => setSettleEnd(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs mb-1">Entry</label>
+                  <select
+                    className="border rounded px-3 py-2 w-full"
+                    value={settleEntry}
+                    onChange={(e) => setSettleEntry(e.target.value as EntryOpt)}
+                  >
+                    <option value="IN">Uang Masuk</option>
+                    <option value="OUT">Uang Keluar</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs mb-1">Transaction Time</label>
+                  <input
+                    type="datetime-local" step="1"
+                    className="border rounded px-3 py-2 w-full"
+                    value={settleTxnAt}
+                    onChange={(e) => setSettleTxnAt(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* KANAN */}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs mb-1">Jumlah</label>
+                  <input
+                    ref={settleAmountRef}
+                    className="border rounded px-3 py-2 w-full text-right"
+                    value={settleAmountStr}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onChange={(e) => {
+                      const f = formatWithGroupingLive(e.target.value);
+                      setSettleAmountStr(f);
+                      setTimeout(() => {
+                        const el = settleAmountRef.current; if (el) {
+                          const L = el.value.length; el.setSelectionRange(L, L);
+                        }
+                      }, 0);
+                    }}
+                    onBlur={() => {
+                      const n = toNumber(settleAmountStr);
+                      setSettleAmountStr(new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n));
+                    }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs mb-1">Biaya Transfer</label>
+                  <input
+                    ref={settleFeeRef}
+                    className="border rounded px-3 py-2 w-full text-right"
+                    value={settleFeeStr}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onChange={(e) => {
+                      const f = formatWithGroupingLive(e.target.value);
+                      setSettleFeeStr(f);
+                      setTimeout(() => {
+                        const el = settleFeeRef.current; if (el) {
+                          const L = el.value.length; el.setSelectionRange(L, L);
+                        }
+                      }, 0);
+                    }}
+                    onBlur={() => {
+                      const n = toNumber(settleFeeStr);
+                      setSettleFeeStr(new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n));
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs mb-1">Description</label>
+                  <input
+                    className="border rounded px-3 py-2 w-full"
+                    value={settleDesc}
+                    onChange={(e) => setSettleDesc(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* ROW TARGET */}
+              <div className="md:col-span-2 grid md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs mb-1">Target Bank Provider</label>
+                  <select
+                    className="border rounded px-3 py-2 w-full"
+                    value={settleProvider}
+                    onChange={(e) => setSettleProvider(e.target.value)}
+                  >
+                    {Array.from(new Set([...(BANK_CODES ?? []), "OTHER"])).map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs mb-1">Target Bank Account Name</label>
+                  <input
+                    className="border rounded px-3 py-2 w-full"
+                    value={settleTargetName}
+                    onChange={(e) => setSettleTargetName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs mb-1">Target Bank Account Number</label>
+                  <input
+                    className="border rounded px-3 py-2 w-full"
+                    value={settleTargetNo}
+                    onChange={(e) => setSettleTargetNo(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t p-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeSettle}
+                className="rounded px-4 py-2 bg-gray-100"
+                disabled={dpGuard.submitting}
+                aria-disabled={dpGuard.submitting}
+              >
+                Close
+              </button>
+              <button
+                type="submit"
+                className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+                disabled={dpGuard.submitting || role !== "admin"}
+                aria-disabled={dpGuard.submitting || role !== "admin"}
+                title={role !== "admin" ? "Hanya admin yang bisa submit" : (dpGuard.submitting ? "Submitting..." : "Submit")}
               >
                 {dpGuard.submitting ? "Submitting…" : "Submit"}
               </button>
