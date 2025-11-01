@@ -59,6 +59,7 @@ export default function Sidebar() {
     { label: "Interbank Transfer", href: "/interbank_transfers", enabled: true },
     { label: "Bank Adjustment", href: "/bank_adjustments", enabled: true },
     { label: "Expenses", href: "/bank_expenses", enabled: true },
+    { label: "Akuran", href: "/settlements", enabled: true },
     { label: "Bank Mutation", href: "/bank_mutations", enabled: true },
     { label: "Bank Management", href: "/bank_managements", enabled: true },
     { label: "Credit Topup", href: "/credit_topups", enabled: true },
