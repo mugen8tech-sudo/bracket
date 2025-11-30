@@ -231,8 +231,18 @@ export default function BankMutationsTable() {
     // Filter bank
     if (fBankId) q = q.eq("bank_id", Number(fBankId));
 
-    // Filter desc
-    if (fDesc.trim()) q = q.ilike("description", `%${fDesc.trim()}%`);
+    // Filter desc (multi-keyword, AND)
+    if (fDesc.trim()) {
+      const keywords = fDesc
+        .trim()
+        .split(/\s+/)        // pisah per spasi
+        .filter(Boolean);    // buang string kosong
+
+      for (const kw of keywords) {
+        // setiap kata harus muncul di description (case-insensitive, posisi bebas)
+        q = q.ilike("description", `%${kw}%`);
+      }
+    }
 
     // paging
     const from = (pageToLoad - 1) * PAGE_SIZE;
