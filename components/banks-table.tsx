@@ -44,7 +44,7 @@ const EXPENSE_CATEGORY_CODES = [
   "BONUS PLAYER", "BONUS SPV", "BONUS TELE", "DATABASE", "DOMAIN & HOSTING",
   "ENTERTAINMENT", "GAJI CS", "GAJI CS WA BLAST", "GAJI DESIGN", "GAJI FINANCE",
   "GAJI HEAD CS", "GAJI HEAD WA BLAST", "GAJI OB", "GAJI PAID ADS", "GAJI SEO",
-  "GAJI SPV", "GAJI SPV CRM", "GAJI TELE", "IKLAN", "INTERNET", "INTERNET SEHAT (NAWALA)",
+  "GAJI SPV", "GAJI SPV CRM", "GAJI TELE", "GAJI TENGAH", "IKLAN", "INTERNET", "INTERNET SEHAT (NAWALA)",
   "IP FEE", "KEAMANAN", "KEBERSIHAN", "KESEHATAN", "KOORDINASI", "LAIN-LAIN", "LAUNDRY",
   "LISTRIK", "LIVECHAT", "MAINTENANCE", "MAKAN", "PANTRY", "PAYPAL", "PERALATAN", "PERLENGKAPAN",
   "PULSA", "RENOVASI FURNITURE & ELECTRONIC", "RENOVASI SIPIL", "SEO", "SETUP FEE (APK)",
@@ -237,6 +237,9 @@ export default function BanksTable() {
   const [expenseAmountStr, setExpenseAmountStr] = useState<string>("0.00");
   const [expenseCategory, setExpenseCategory] = useState<string>(EXPENSE_CATEGORY_CODES[0] ?? "");
   const [expenseDesc, setExpenseDesc] = useState<string>("");
+  const [expenseCategorySearch, setExpenseCategorySearch] = useState<string>("");
+  const [expenseCategoryOpen, setExpenseCategoryOpen] = useState<boolean>(false);
+  const [expenseCategoryIndex, setExpenseCategoryIndex] = useState<number>(0);
 
   // ====== AKURAN modal ======
   const [showSettle, setShowSettle] = useState(false);
@@ -271,6 +274,8 @@ export default function BanksTable() {
   const ttFeeRef = useRef<HTMLInputElement | null>(null);
   const adjAmountRef = useRef<HTMLInputElement | null>(null);
   const expenseAmountRef = useRef<HTMLInputElement | null>(null);
+  const expenseCategoryInputRef = useRef<HTMLInputElement | null>(null);
+  const expenseCategoryContainerRef = useRef<HTMLDivElement | null>(null);
 
   const closeNew = useCallback(() => setShowNew(false), []);
   const openNew  = useCallback(() => setShowNew(true), []);
@@ -348,6 +353,9 @@ export default function BanksTable() {
     setExpenseAmountStr("0.00");
     setExpenseCategory(EXPENSE_CATEGORY_CODES[0] ?? "");
     setExpenseDesc("");
+    setExpenseCategorySearch("");
+    setExpenseCategoryOpen(false);
+    setExpenseCategoryIndex(0);
     setTimeout(()=>expenseAmountRef.current?.select(), 0);
   };
 
@@ -453,6 +461,23 @@ export default function BanksTable() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Close dropdown kategori Biaya saat klik di luar komponen
+  useEffect(() => {
+    if (!expenseCategoryOpen) return;
+
+    const handler = (e: MouseEvent) => {
+      const container = expenseCategoryContainerRef.current;
+      if (container && !container.contains(e.target as Node)) {
+        setExpenseCategoryOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+    };
+  }, [expenseCategoryOpen]);
 
   // cari lead by username (untuk DP & WD), exact tanpa wildcard
   useEffect(() => {
@@ -1976,13 +2001,139 @@ export default function BanksTable() {
               {/* Category */}
               <div>
                 <label className="block text-xs mb-1">Category</label>
-                <select
-                  className="border rounded px-3 py-2 w-full"
-                  value={expenseCategory}
-                  onChange={(e)=>setExpenseCategory(e.target.value)}
-                >
-                  {EXPENSE_CATEGORY_CODES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+                <div className="relative" ref={expenseCategoryContainerRef}>
+                  {/* Tombol "select" utama */}
+                  <button
+                    type="button"
+                    className="border rounded px-3 py-2 w-full text-left"
+                    onClick={() => {
+                      const willOpen = !expenseCategoryOpen;
+                      setExpenseCategoryOpen(willOpen);
+                      if (willOpen) {
+                        setExpenseCategorySearch("");
+                        setExpenseCategoryIndex(0);
+                        // fokus ke kolom search di dalam dropdown
+                        setTimeout(() => {
+                          expenseCategoryInputRef.current?.focus();
+                        }, 0);
+                      }
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className={expenseCategory ? "" : "text-gray-500"}>
+                        {expenseCategory || "Pilih category"}
+                      </span>
+                      <span className="ml-2">▾</span>
+                    </div>
+                  </button>
+
+                  {/* Panel dropdown: search + list kategori */}
+                  {expenseCategoryOpen && (
+                    <div className="absolute z-10 mt-1 w-full border bg-white rounded shadow">
+                      {/* Search di DALAM dropdown */}
+                      <div className="p-2 border-b">
+                        <input
+                          ref={expenseCategoryInputRef}
+                          className="border rounded px-3 py-2 w-full"
+                          placeholder="search category…"
+                          value={expenseCategorySearch}
+                          onChange={(e) => {
+                            setExpenseCategorySearch(e.target.value);
+                            setExpenseCategoryIndex(0); // default highlight ke atas
+                          }}
+                          onKeyDown={(e) => {
+                            e.stopPropagation();
+                            const kw = expenseCategorySearch
+                              .trim()
+                              .toLowerCase();
+                            const filtered = kw
+                              ? EXPENSE_CATEGORY_CODES.filter((c) =>
+                                  c.toLowerCase().includes(kw)
+                                )
+                              : EXPENSE_CATEGORY_CODES;
+                            if (e.key === "ArrowDown" && filtered.length > 0) {
+                              e.preventDefault();
+                              setExpenseCategoryIndex((i) =>
+                                Math.min(i + 1, filtered.length - 1)
+                              );
+                              return;
+                            }
+                            if (e.key === "ArrowUp" && filtered.length > 0) {
+                              e.preventDefault();
+                              setExpenseCategoryIndex((i) =>
+                                Math.max(i - 1, 0)
+                              );
+                              return;
+                            }
+                            if (e.key === "Enter") {
+                              // pilih kategori pertama dari hasil filter
+                              e.preventDefault();
+                              if (filtered.length > 0) {
+                                const pick =
+                                  filtered[
+                                    Math.min(
+                                      expenseCategoryIndex,
+                                      filtered.length - 1
+                                    )
+                                  ];
+                                if (pick) {
+                                  setExpenseCategory(pick);
+                                }
+                              }
+                              setExpenseCategoryOpen(false);
+                              return;
+                            }
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              setExpenseCategoryOpen(false);
+                            }
+                          }}
+                        />
+                      </div>
+
+                      {/* List kategori */}
+                      <div className="max-h-56 overflow-auto">
+                        {(() => {
+                          const kw = expenseCategorySearch
+                            .trim()
+                            .toLowerCase();
+                          const filtered = kw
+                            ? EXPENSE_CATEGORY_CODES.filter((c) =>
+                                c.toLowerCase().includes(kw)
+                              )
+                            : EXPENSE_CATEGORY_CODES;
+
+                          if (filtered.length === 0) {
+                            return (
+                              <div className="px-3 py-2 text-sm text-gray-500">
+                                Tidak ada kategori cocok
+                              </div>
+                            );
+                          }
+
+                          return filtered.map((c, idx) => (
+                            <button
+                              key={c}
+                              type="button"
+                              onClick={() => {
+                                setExpenseCategory(c);
+                                setExpenseCategoryOpen(false);
+                              }}
+                              onMouseEnter={() => setExpenseCategoryIndex(idx)}
+                              className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 ${
+                                idx === expenseCategoryIndex
+                                  ? "bg-blue-50"
+                                  : ""
+                              }`}
+                            >
+                              {c}
+                            </button>
+                          ));
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Description */}
