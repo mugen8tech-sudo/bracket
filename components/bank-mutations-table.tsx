@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
@@ -194,6 +194,9 @@ function splitSettlementMeta(raw?: string | null) {
 export default function BankMutationsTable() {
   const supabase = supabaseBrowser();
 
+  const bankFilterInputRef = useRef<HTMLInputElement | null>(null);
+  const bankFilterContainerRef = useRef<HTMLDivElement | null>(null);
+
   // data
   const [banks, setBanks] = useState<BankLite[]>([]);
   const [rows, setRows] = useState<BankMutationRow[]>([]);
@@ -227,6 +230,10 @@ export default function BankMutationsTable() {
   const [fBankId, setFBankId] = useState<number | "">("");
   const [fDesc, setFDesc] = useState("");
 
+  const [fBankOpen, setFBankOpen] = useState(false);
+  const [fBankSearch, setFBankSearch] = useState("");
+  const [fBankIndex, setFBankIndex] = useState(0);
+
   // load daftar bank tenant
   useEffect(() => {
     (async () => {
@@ -251,6 +258,23 @@ export default function BankMutationsTable() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // close dropdown filter bank saat klik di luar
+  useEffect(() => {
+    if (!fBankOpen) return;
+
+    const handler = (e: MouseEvent) => {
+      const container = bankFilterContainerRef.current;
+      if (container && !container.contains(e.target as Node)) {
+        setFBankOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+    };
+  }, [fBankOpen]);
 
   // query utama
   const load = async (pageToLoad = page) => {
@@ -1027,23 +1051,169 @@ export default function BankMutationsTable() {
 
               {/* Bank */}
               <th className="min-w-[320px]">
-                <select
-                  value={fBankId === "" ? "" : String(fBankId)}
-                  onChange={(e) =>
-                    setFBankId(
-                      e.target.value ? Number(e.target.value) : "",
-                    )
-                  }
-                  className="w-full border rounded px-2 py-1"
+                <div
+                  className="relative"
+                  ref={bankFilterContainerRef}
                 >
-                  <option value="">All</option>
-                  {banks.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      [{b.bank_code}] {b.account_name} - {b.account_no}
-                      {!b.is_active ? " (OFF)" : ""}
-                    </option>
-                  ))}
-                </select>
+                  {/* Tombol utama */}
+                  <button
+                    type="button"
+                    className="w-full border rounded px-2 py-1 text-left"
+                    onClick={() => {
+                      const willOpen = !fBankOpen;
+                      setFBankOpen(willOpen);
+                      if (willOpen) {
+                        setFBankSearch("");
+                        setFBankIndex(0);
+                        setTimeout(() => {
+                          bankFilterInputRef.current?.focus();
+                        }, 0);
+                      }
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className={fBankId === "" ? "text-gray-500" : ""}>
+                        {fBankId === ""
+                          ? "All"
+                          : bankLabel(Number(fBankId))}
+                      </span>
+                      <span className="ml-2">▾</span>
+                    </div>
+                  </button>
+
+                  {/* Panel dropdown */}
+                  {fBankOpen && (
+                    <div className="absolute z-10 mt-1 w-full border bg-white rounded shadow">
+                      {/* Search di dalam dropdown */}
+                      <div className="p-2 border-b">
+                        <input
+                          ref={bankFilterInputRef}
+                          className="border rounded px-3 py-2 w-full"
+                          placeholder="search bank…"
+                          value={fBankSearch}
+                          onChange={(e) => {
+                            setFBankSearch(e.target.value);
+                            setFBankIndex(0); // highlight ke item pertama
+                          }}
+                          onKeyDown={(e) => {
+                            e.stopPropagation();
+
+                            const kw = fBankSearch.trim().toLowerCase();
+                            const allItems: { id: number | ""; label: string }[] =
+                              [
+                                { id: "", label: "All" },
+                                ...banks.map((b) => ({
+                                  id: b.id,
+                                  label: `[${b.bank_code}] ${b.account_name} - ${b.account_no}${
+                                    !b.is_active ? " (OFF)" : ""
+                                  }`,
+                                })),
+                              ];
+
+                            const filtered = kw
+                              ? allItems.filter(
+                                  (it) =>
+                                    it.id !== "" && // kalau sedang search, jangan tampilkan All
+                                    it.label.toLowerCase().includes(kw),
+                                )
+                              : allItems;
+
+                            if (e.key === "ArrowDown" && filtered.length > 0) {
+                              e.preventDefault();
+                              setFBankIndex((i) =>
+                                Math.min(i + 1, filtered.length - 1),
+                              );
+                              return;
+                            }
+
+                            if (e.key === "ArrowUp" && filtered.length > 0) {
+                              e.preventDefault();
+                              setFBankIndex((i) =>
+                                Math.max(i - 1, 0),
+                              );
+                              return;
+                            }
+
+                            if (e.key === "Enter" && filtered.length > 0) {
+                              e.preventDefault();
+                              const pick =
+                                filtered[
+                                  Math.min(
+                                    fBankIndex,
+                                    filtered.length - 1,
+                                  )
+                                ];
+                              if (pick) {
+                                setFBankId(
+                                  pick.id === "" ? "" : Number(pick.id),
+                                );
+                              }
+                              setFBankOpen(false);
+                              return;
+                            }
+
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              setFBankOpen(false);
+                            }
+                          }}
+                        />
+                      </div>
+
+                      {/* List bank */}
+                      <div className="max-h-64 overflow-auto">
+                        {(() => {
+                          const kw = fBankSearch.trim().toLowerCase();
+                          const allItems: { id: number | ""; label: string }[] =
+                            [
+                              { id: "", label: "All" },
+                              ...banks.map((b) => ({
+                                id: b.id,
+                                label: `[${b.bank_code}] ${b.account_name} - ${b.account_no}${
+                                  !b.is_active ? " (OFF)" : ""
+                                }`,
+                              })),
+                            ];
+
+                          const filtered = kw
+                            ? allItems.filter(
+                                (it) =>
+                                  it.id !== "" && // sembunyikan All saat search aktif
+                                  it.label.toLowerCase().includes(kw),
+                              )
+                            : allItems;
+
+                          if (filtered.length === 0) {
+                            return (
+                              <div className="px-3 py-2 text-sm text-gray-500">
+                                Tidak ada bank cocok
+                              </div>
+                            );
+                          }
+
+                          return filtered.map((item, idx) => (
+                            <button
+                              key={`${item.id || "all"}`}
+                              type="button"
+                              onClick={() => {
+                                setFBankId(
+                                  item.id === "" ? "" : Number(item.id),
+                                );
+                                setFBankOpen(false);
+                              }}
+                              onMouseEnter={() => setFBankIndex(idx)}
+                              className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 ${
+                                idx === fBankIndex ? "bg-blue-50" : ""
+                              }`}
+                            >
+                              {item.label}
+                            </button>
+                          ));
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </th>
 
               {/* Desc */}
