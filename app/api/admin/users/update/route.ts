@@ -9,8 +9,15 @@ export async function POST(req: NextRequest) {
     const user_id: string = body?.user_id;
     const full_name: string = (body?.full_name ?? "").trim();
     const email: string = (body?.email ?? "").trim().toLowerCase();
-    const roleRaw: string = (body?.role ?? "").toLowerCase();
-    const role = roleRaw === "admin" ? "admin" : roleRaw === "cs" ? "cs" : "viewer";
+    const roleRaw: string = (body?.role ?? "viewer").toLowerCase().trim();
+
+    const allowedRoles = ["admin", "cs", "cs_dp", "cs_wd", "operator", "viewer"] as const;
+
+    const role = (
+      allowedRoles.includes(roleRaw as (typeof allowedRoles)[number])
+        ? roleRaw
+        : "viewer"
+    ) as (typeof allowedRoles)[number];
 
     if (!user_id) return new Response("user_id required", { status: 400 });
 
