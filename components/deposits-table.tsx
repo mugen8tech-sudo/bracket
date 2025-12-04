@@ -5,6 +5,21 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 import Link from "next/link";
 
+// ===== Role helpers (samakan dengan Sidebar/Banks/UserManagement) =====
+type AppRole = "admin" | "cs" | "cs_dp" | "cs_wd" | "operator" | "viewer";
+type AnyRole = AppRole | "other";
+
+function normalizeRole(r?: string | null): AnyRole {
+  const v = (r || "").toLowerCase();
+  if (v === "admin") return "admin";
+  if (v === "cs" || v === "assops") return "cs";
+  if (v === "cs_dp") return "cs_dp";
+  if (v === "cs_wd") return "cs_wd";
+  if (v === "operator") return "operator";
+  if (v === "viewer" || v === "agent") return "viewer";
+  return "other";
+}
+
 function useSubmitGuard() {
   const lockRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
@@ -68,6 +83,38 @@ function nowLocalDatetimeValue() {
 
 export default function DepositsTable() {
   const supabase = supabaseBrowser();
+
+  // role untuk guard tombol Delete
+  const [role, setRole] = useState<AnyRole>("other");
+  const [roleLoading, setRoleLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        setRoleLoading(false);
+        return;
+      }
+
+      const { data: prof, error } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("user_id", user.id)
+        .single();
+
+      if (error) {
+        console.error("load role (deposits) error:", error);
+        setRoleLoading(false);
+        return;
+      }
+
+      setRole(normalizeRole((prof as any)?.role));
+      setRoleLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // header summary (hari ini, berdasarkan waktu dipilih/backdate)
   const [sumToday, setSumToday] = useState<number>(0);
@@ -373,6 +420,12 @@ export default function DepositsTable() {
   const canPrev = page > 1;
   const canNext = page < totalPages;
 
+  const canDeleteDeposit =
+    role === "admin" ||
+    role === "operator" ||
+    role === "cs" ||
+    role === "cs_dp";
+
   return (
     <div className="space-y-3">
       {/* Header summary */}
@@ -459,7 +512,7 @@ export default function DepositsTable() {
               <th className="text-left w-52">Tgl (dipilih)</th>
               <th className="text-left w-32">By</th>
               <th className="text-left w-24">Reversed?</th>
-              <th className="text-left w-44 min-w-[10rem]">Action</th>
+              <th className="text-left w-40">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -488,23 +541,49 @@ export default function DepositsTable() {
                   </td>
                   <td>{r.created_by_name ?? r.created_by ?? "-"}</td>
                   <td>{r.status === "reversed" ? "YES" : "NO"}</td>
-                  <td className="whitespace-nowrap">
-                    <div className="inline-flex items-center gap-2">
-                      <Link
-                        href={`/deposits/${r.id}`}
-                        className="rounded bg-gray-100 px-3 py-1 shrink-0"
-                      >
-                        Detail
-                      </Link>
-                      {r.status !== "reversed" && (
-                        <button
-                          onClick={() => openDelete(r)}
-                          className="rounded bg-red-600 text-white px-3 py-1 shrink-0"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
+                  <td className="space-x-2">
+                    <Link
+                      href={`/deposits/${r.id}`}
+                      className="rounded bg-gray-100 px-3 py-1"
+                    >
+                      Detail
+                    </Link>
+                    {r.status !== "reversed" && (
+                      <>
+                        {roleLoading ? (
+                          // sementara loading role → tombol nonaktif
+                          <button
+                            type="button"
+                            className="rounded bg-red-400 text-white px-3 py-1 opacity-60 cursor-not-allowed"
+                            disabled
+                            aria-disabled="true"
+                            title="Memuat role..."
+                          >
+                            Delete
+                          </button>
+                        ) : canDeleteDeposit ? (
+                          <button
+                            type="button"
+                            onClick={() => openDelete(r)}
+                            className="rounded bg-red-600 text-white px-3 py-1"
+                            title="Reverse / delete deposit"
+                          >
+                            Delete
+                          </button>
+                        ) : (
+                          // role lain: tombol nonaktif (guard FE)
+                          <button
+                            type="button"
+                            className="rounded bg-red-400 text-white px-3 py-1 opacity-60 cursor-not-allowed"
+                            disabled
+                            aria-disabled="true"
+                            title="Unauthorized"
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </>
+                    )}
                   </td>
                 </tr>
               ))
