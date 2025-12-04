@@ -10,8 +10,17 @@ export async function POST(req: NextRequest) {
     const full_name: string = (body?.full_name ?? "").trim();
     const email: string = (body?.email ?? "").trim().toLowerCase();
     const password: string = body?.password ?? "";
-    const roleRaw: string = (body?.role ?? "viewer").toLowerCase();
-    const role = roleRaw === "admin" ? "admin" : roleRaw === "cs" ? "cs" : "viewer";
+    const roleRaw: string = (body?.role ?? "viewer").toLowerCase().trim();
+
+    // enum persis dengan Supabase
+    const allowedRoles = ["admin", "cs", "cs_dp", "cs_wd", "operator", "viewer"] as const;
+
+    // kalau role dari FE tidak ada di enum → fallback ke "viewer"
+    const role = (
+      allowedRoles.includes(roleRaw as (typeof allowedRoles)[number])
+        ? roleRaw
+        : "viewer"
+    ) as (typeof allowedRoles)[number];
 
     if (!full_name || !email || !password) {
       return new Response("Name, email, password are required", { status: 400 });
@@ -50,7 +59,7 @@ export async function POST(req: NextRequest) {
           user_id: uid,
           tenant_id: tenantId,
           full_name,
-          role, // "admin" | "cs" | "viewer"
+          role, // "admin" | "cs" | "cs_dp" | "cs_wd" | "operator" | "viewer"
           created_at: new Date().toISOString(),
         },
         { onConflict: "user_id" }
