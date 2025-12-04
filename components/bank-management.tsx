@@ -54,7 +54,7 @@ const PURPOSE_OPTIONS: { label: "ALL" | "DP" | "WD"; value: Bank["usage_type"] }
 export default function BankManagement() {
   const supabase = supabaseBrowser();
 
-  /** ===== Guard admin ===== */
+  /** ===== Guard admin & operator ===== */
   const [authorized, setAuthorized] = useState<"loading"|"ok"|"no">("loading");
 
   /** ===== Tenant (Website) ===== */
@@ -128,13 +128,26 @@ export default function BankManagement() {
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { setAuthorized("no"); return; }
+      if (!user) {
+        setAuthorized("no");
+        return;
+      }
+
       const { data: prof } = await supabase
         .from("profiles")
         .select("role, tenant_id")
         .eq("user_id", user.id)
         .single();
-      if (!prof || prof.role !== "admin") { setAuthorized("no"); return; }
+
+      const rawRole = (prof as any)?.role ?? "";
+      const role = typeof rawRole === "string" ? rawRole.toLowerCase() : "";
+
+      // Hanya admin & operator yang boleh akses Bank Management
+      if (!prof || (role !== "admin" && role !== "operator")) {
+        setAuthorized("no");
+        return;
+      }
+
       setAuthorized("ok");
 
       await loadTenantName(prof?.tenant_id);
@@ -240,7 +253,6 @@ export default function BankManagement() {
     return (
       <div className="p-6">
         <div className="text-red-600 font-semibold mb-2">Unauthorized</div>
-        <div>Halaman ini hanya untuk Admin.</div>
       </div>
     );
   }
