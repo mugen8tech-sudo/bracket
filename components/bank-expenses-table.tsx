@@ -18,23 +18,89 @@ type ExpenseRow = {
   created_by: string;
 };
 
-type BankLite = { id: number; bank_code: string; account_name: string; account_no: string; };
+type BankLite = {
+  id: number;
+  bank_code: string;
+  account_name: string;
+  account_no: string;
+};
 type ProfileLite = { user_id: string; full_name: string | null };
 
 const PAGE_SIZE = 25;
 
 // di atas file (atau impor dari lib)
 const EXPENSE_CATEGORY_CODES = [
-  "AIR","BELI REKENING","BONUS CRM","BONUS CS","BONUS MEMBER",
-  "BONUS PLAYER","BONUS SPV","BONUS TELE","DATABASE","DOMAIN & HOSTING",
-  "ENTERTAINMENT","GAJI CS","GAJI CS WA BLAST","GAJI DESIGN","GAJI FINANCE",
-  "GAJI HEAD CS","GAJI HEAD WA BLAST","GAJI OB","GAJI PAID ADS","GAJI SEO",
-  "GAJI SPV","GAJI SPV CRM","GAJI TELE","IKLAN","INTERNET","INTERNET SEHAT (NAWALA)",
-  "IP FEE","KEAMANAN","KEBERSIHAN","KESEHATAN","KOORDINASI","LAIN-LAIN","LAUNDRY",
-  "LISTRIK","LIVECHAT","MAINTENANCE","MAKAN","PANTRY","PAYPAL","PERALATAN","PERLENGKAPAN",
-  "PULSA","RENOVASI FURNITURE & ELECTRONIC","RENOVASI SIPIL","SEO","SETUP FEE (APK)",
-  "SEWA","SKYPE","SMS BLAST","THR","TICKET & TRANSPORTASI","MAINTENANCE FEE","OTHER EXPENSE","MISTAKE CS"
+  "AIR",
+  "BELI REKENING",
+  "BONUS CRM",
+  "BONUS CS",
+  "BONUS MEMBER",
+  "BONUS PLAYER",
+  "BONUS SPV",
+  "BONUS TELE",
+  "DATABASE",
+  "DOMAIN & HOSTING",
+  "ENTERTAINMENT",
+  "GAJI CS",
+  "GAJI CS WA BLAST",
+  "GAJI DESIGN",
+  "GAJI FINANCE",
+  "GAJI HEAD CS",
+  "GAJI HEAD WA BLAST",
+  "GAJI OB",
+  "GAJI PAID ADS",
+  "GAJI SEO",
+  "GAJI SPV",
+  "GAJI SPV CRM",
+  "GAJI TELE",
+  "GAJI TENGAH",
+  "IKLAN",
+  "INTERNET",
+  "INTERNET SEHAT (NAWALA)",
+  "IP FEE",
+  "KEAMANAN",
+  "KEBERSIHAN",
+  "KESEHATAN",
+  "KOORDINASI",
+  "LAIN-LAIN",
+  "LAUNDRY",
+  "LISTRIK",
+  "LIVECHAT",
+  "MAINTENANCE",
+  "MAKAN",
+  "PANTRY",
+  "PAYPAL",
+  "PERALATAN",
+  "PERLENGKAPAN",
+  "PULSA",
+  "RENOVASI FURNITURE & ELECTRONIC",
+  "RENOVASI SIPIL",
+  "SEO",
+  "SETUP FEE (APK)",
+  "SEWA",
+  "SKYPE",
+  "SMS BLAST",
+  "THR",
+  "TICKET & TRANSPORTASI",
+  "MAINTENANCE FEE",
+  "OTHER EXPENSE",
+  "MISTAKE CS",
 ];
+
+// ===== Role helpers (samakan dengan Banks & UserManagement) =====
+type AppRole = "admin" | "cs" | "cs_dp" | "cs_wd" | "operator" | "viewer";
+type AnyRole = AppRole | "other";
+
+function normalizeRole(r?: string | null): AnyRole {
+  const v = (r || "").toLowerCase();
+  if (v === "admin") return "admin";
+  if (v === "cs" || v === "assops") return "cs";
+  if (v === "cs_dp") return "cs_dp";
+  if (v === "cs_wd") return "cs_wd";
+  if (v === "operator") return "operator";
+  if (v === "viewer" || v === "agent") return "viewer";
+  return "other";
+}
 
 function startOfDayJakartaISO(d: string) {
   return new Date(`${d}T00:00:00+07:00`).toISOString();
@@ -48,12 +114,23 @@ function todayJakartaYMD() {
 function fmtIdDateTime(d: string) {
   const dt = new Date(d);
   const date = dt.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" });
-  const time = dt.toLocaleTimeString("id-ID", { hour12: false, timeZone: "Asia/Jakarta" }).replace(/:/g, ".");
+  const time = dt
+    .toLocaleTimeString("id-ID", {
+      hour12: false,
+      timeZone: "Asia/Jakarta",
+    })
+    .replace(/:/g, ".");
   return `${date}, ${time}`;
 }
 
 export default function BankExpensesTable() {
   const supabase = supabaseBrowser();
+
+  // ===== Guard: hanya Admin & Operator =====
+  const [authorized, setAuthorized] = useState<"loading" | "ok" | "no">(
+    "loading",
+  );
+  const [myRole, setMyRole] = useState<AnyRole>("other");
 
   const [rows, setRows] = useState<ExpenseRow[]>([]);
   const [banks, setBanks] = useState<Record<number, BankLite>>({});
@@ -70,7 +147,43 @@ export default function BankExpensesTable() {
   const [fCat, setFCat] = useState<string>("ALL");
 
   // optional: muat distinct kategori untuk filter
-  const [catOptions, setCatOptions] = useState<string[]>(EXPENSE_CATEGORY_CODES);
+  const [catOptions] = useState<string[]>(EXPENSE_CATEGORY_CODES);
+
+  // Bootstrap role
+  useEffect(() => {
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        setAuthorized("no");
+        return;
+      }
+
+      const { data: prof, error } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("user_id", user.id)
+        .single();
+
+      if (error) {
+        console.error("profiles role error (Expenses):", error);
+        setAuthorized("no");
+        return;
+      }
+
+      const role = normalizeRole((prof as any)?.role);
+      setMyRole(role);
+
+      // Expenses (Biaya) page: hanya admin & operator
+      if (role === "admin" || role === "operator") {
+        setAuthorized("ok");
+      } else {
+        setAuthorized("no");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const load = async (pageToLoad = page) => {
     setLoading(true);
@@ -89,27 +202,46 @@ export default function BankExpensesTable() {
     const to = from + PAGE_SIZE - 1;
 
     const { data, count, error } = await q.range(from, to);
-    if (error) { setLoading(false); alert(error.message); return; }
+    if (error) {
+      setLoading(false);
+      alert(error.message);
+      return;
+    }
 
     const list = (data as ExpenseRow[]) ?? [];
 
     // lookups
-    const bankIds = Array.from(new Set(list.map(r => r.bank_id)));
-    const userIds = Array.from(new Set(list.map(r => r.created_by)));
+    const bankIds = Array.from(new Set(list.map((r) => r.bank_id)));
+    const userIds = Array.from(new Set(list.map((r) => r.created_by)));
 
     const [bankRes, profRes] = await Promise.all([
       bankIds.length
-        ? supabase.from("banks").select("id, bank_code, account_name, account_no").in("id", bankIds)
+        ? supabase
+            .from("banks")
+            .select("id, bank_code, account_name, account_no")
+            .in("id", bankIds)
         : Promise.resolve({ data: [] as any[] }),
       userIds.length
-        ? supabase.from("profiles").select("user_id, full_name").in("user_id", userIds)
+        ? supabase
+            .from("profiles")
+            .select("user_id, full_name")
+            .in("user_id", userIds)
         : Promise.resolve({ data: [] as any[] }),
-      supabase.from("bank_expenses").select("category_code")
-        .order("category_code", { ascending: true })
     ]);
 
-    setBanks(Object.fromEntries(((bankRes.data as BankLite[]) ?? []).map(b => [b.id, b])));
-    setProfiles(Object.fromEntries(((profRes.data as ProfileLite[]) ?? []).map(p => [p.user_id, p.full_name ?? p.user_id])));
+    setBanks(
+      Object.fromEntries(
+        ((bankRes.data as BankLite[]) ?? []).map((b) => [b.id, b]),
+      ),
+    );
+    setProfiles(
+      Object.fromEntries(
+        ((profRes.data as ProfileLite[]) ?? []).map((p) => [
+          p.user_id,
+          p.full_name ?? p.user_id,
+        ]),
+      ),
+    );
 
     setRows(list);
     setTotal(count ?? list.length);
@@ -117,43 +249,99 @@ export default function BankExpensesTable() {
     setLoading(false);
   };
 
-  useEffect(() => { load(1); }, []); // eslint-disable-line
+  // Load data hanya setelah authorized OK
+  useEffect(() => {
+    if (authorized === "ok") {
+      load(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authorized]);
 
   const bankLabel = (id: number) => {
     const b = banks[id];
     return b ? `[${b.bank_code}] ${b.account_name} - ${b.account_no}` : "[]";
   };
 
+  // ===== Guard render =====
+  if (authorized === "loading") {
+    return <div className="p-6">Loading…</div>;
+  }
+
+  if (authorized === "no") {
+    return (
+      <div className="p-6">
+        <div className="text-red-600 font-semibold mb-2">Unauthorized</div>
+      </div>
+    );
+  }
+
+  // ===== Normal render (authorized) =====
   return (
     <div className="space-y-3">
-      <div className="rounded border bg-white p-3"><b>Expenses</b></div>
+      <div className="rounded border bg-white p-3">
+        <b>Expenses</b>
+      </div>
 
       <div className="overflow-auto rounded border bg-white">
-        <table className="table-grid min-w-[1150px]" style={{ borderCollapse: "collapse" }}>
+        <table
+          className="table-grid min-w-[1150px]"
+          style={{ borderCollapse: "collapse" }}
+        >
           <thead>
             {/* Baris filter sejajar jumlah kolom */}
             <tr className="filters">
-              {/* ID */}        <th className="w-16" />
-              {/* Bank */}      <th className="w-[320px]" />
-              {/* Amount */}    <th className="w-36" />
-              {/* Category */}  <th className="w-40">
-                <select value={fCat} onChange={(e)=>setFCat(e.target.value)} className="w-full border rounded px-2 py-1">
+              {/* ID */}
+              <th className="w-16" />
+              {/* Bank */}
+              <th className="w-[320px]" />
+              {/* Amount */}
+              <th className="w-36" />
+              {/* Category */}
+              <th className="w-40">
+                <select
+                  value={fCat}
+                  onChange={(e) => setFCat(e.target.value)}
+                  className="w-full border rounded px-2 py-1"
+                >
                   <option value="ALL">All</option>
-                  {catOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                  {catOptions.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
                 </select>
               </th>
-              {/* Description */} <th className="w-64" />
+              {/* Description */}
+              <th className="w-64" />
               {/* Tgl (2 input) */}
               <th className="w-56">
                 <div className="flex flex-col gap-1">
-                  <input type="date" value={fStart} onChange={(e)=>setFStart(e.target.value)} className="border rounded px-2 py-1 w-full" placeholder=", dd --- yyyy" />
-                  <input type="date" value={fFinish} onChange={(e)=>setFFinish(e.target.value)} className="border rounded px-2 py-1 w-full" placeholder=", dd --- yyyy" />
+                  <input
+                    type="date"
+                    value={fStart}
+                    onChange={(e) => setFStart(e.target.value)}
+                    className="border rounded px-2 py-1 w-full"
+                    placeholder=", dd --- yyyy"
+                  />
+                  <input
+                    type="date"
+                    value={fFinish}
+                    onChange={(e) => setFFinish(e.target.value)}
+                    className="border rounded px-2 py-1 w-full"
+                    placeholder=", dd --- yyyy"
+                  />
                 </div>
               </th>
-              {/* By */}        <th className="w-40" />
+              {/* By */}
+              <th className="w-40" />
               {/* Action (Submit) */}
               <th className="w-24">
-                <button onClick={()=>load(1)} className="rounded bg-blue-600 text-white px-3 py-1 w-full">Submit</button>
+                <button
+                  onClick={() => load(1)}
+                  className="rounded bg-blue-600 text-white px-3 py-1 w-full"
+                >
+                  Submit
+                </button>
               </th>
             </tr>
 
@@ -171,21 +359,32 @@ export default function BankExpensesTable() {
 
           <tbody>
             {loading ? (
-              <tr><td colSpan={8}>Loading…</td></tr>
+              <tr>
+                <td colSpan={8}>Loading…</td>
+              </tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={8}>No data</td></tr>
+              <tr>
+                <td colSpan={8}>No data</td>
+              </tr>
             ) : (
-              rows.map(r => (
+              rows.map((r) => (
                 <tr key={r.id} className="align-top">
                   <td>{r.id}</td>
                   <td>{bankLabel(r.bank_id)}</td>
                   <td className="text-right">{formatAmount(r.amount)}</td>
                   <td>{r.category_code}</td>
-                  <td className="whitespace-normal break-words">{r.description || "-"}</td>
+                  <td className="whitespace-normal break-words">
+                    {r.description || "-"}
+                  </td>
                   <td>{fmtIdDateTime(r.submitted_at)}</td>
                   <td>{profiles[r.created_by] ?? r.created_by}</td>
                   <td>
-                    <Link href={`/bank_expenses/${r.id}`} className="rounded bg-gray-100 px-3 py-1 inline-block">Detail</Link>
+                    <Link
+                      href={`/bank_expenses/${r.id}`}
+                      className="rounded bg-gray-100 px-3 py-1 inline-block"
+                    >
+                      Detail
+                    </Link>
                   </td>
                 </tr>
               ))
@@ -196,11 +395,37 @@ export default function BankExpensesTable() {
 
       <div className="flex justify-center">
         <nav className="inline-flex items-center gap-1 text-sm select-none">
-          <button onClick={()=>page>1 && load(1)} disabled={page<=1} className="px-3 py-1 rounded border bg-white disabled:opacity-50">First</button>
-          <button onClick={()=>page>1 && load(page-1)} disabled={page<=1} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Previous</button>
-          <span className="px-3 py-1 rounded border bg-white">Page {page} / {Math.max(1, Math.ceil(total/50))}</span>
-          <button onClick={()=>page<totalPages && load(page+1)} disabled={page>=totalPages} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Next</button>
-          <button onClick={()=>page<totalPages && load(totalPages)} disabled={page>=totalPages} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Last</button>
+          <button
+            onClick={() => page > 1 && load(1)}
+            disabled={page <= 1}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            First
+          </button>
+          <button
+            onClick={() => page > 1 && load(page - 1)}
+            disabled={page <= 1}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="px-3 py-1 rounded border bg-white">
+            Page {page} / {Math.max(1, Math.ceil(total / 50))}
+          </span>
+          <button
+            onClick={() => page < totalPages && load(page + 1)}
+            disabled={page >= totalPages}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Next
+          </button>
+          <button
+            onClick={() => page < totalPages && load(totalPages)}
+            disabled={page >= totalPages}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Last
+          </button>
         </nav>
       </div>
     </div>
