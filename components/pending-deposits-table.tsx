@@ -4,6 +4,20 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
+type AppRole = "admin" | "cs" | "cs_dp" | "cs_wd" | "operator" | "viewer";
+type AnyRole = AppRole | "other";
+
+function normalizeRole(r?: string | null): AnyRole {
+  const v = (r || "").toLowerCase();
+  if (v === "admin") return "admin";
+  if (v === "cs" || v === "assops") return "cs";
+  if (v === "cs_dp") return "cs_dp";
+  if (v === "cs_wd") return "cs_wd";
+  if (v === "operator") return "operator";
+  if (v === "viewer" || v === "agent") return "viewer";
+  return "other";
+}
+
 function useSubmitGuard() {
   const lockRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
@@ -104,6 +118,37 @@ type StatusFilter = "ALL" | "ASSIGNED" | "NOT_ASSIGNED";
 /* ========= Komponen ========= */
 export default function PendingDepositsTable() {
   const supabase = supabaseBrowser();
+
+  const [role, setRole] = useState<AnyRole>("other");
+  const [roleLoading, setRoleLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        setRoleLoading(false);
+        return;
+      }
+
+      const { data: prof, error } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("user_id", user.id)
+        .single();
+
+      if (error) {
+        console.error("load role (pending deposits) error:", error);
+        setRoleLoading(false);
+        return;
+      }
+
+      setRole(normalizeRole((prof as any)?.role));
+      setRoleLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // header summary
   const [notAssignedCount, setNotAssignedCount] = useState<number>(0);
@@ -325,6 +370,12 @@ export default function PendingDepositsTable() {
   const canNext = page < totalPages;
   const pageLabel = useMemo(() => `Page ${page} / ${totalPages}`, [page, totalPages]);
 
+  const canAssignOrDelete =
+    role === "admin" ||
+    role === "operator" ||
+    role === "cs" ||
+    role === "cs_dp";
+
   /* ====== RENDER ====== */
   return (
     <div className="space-y-3">
@@ -344,8 +395,8 @@ export default function PendingDepositsTable() {
               <col style={{ width: "43%" }} />
               <col style={{ width: "12%" }} />
               <col style={{ width: "16%" }} />
-              <col style={{ width: "7rem" }} />
-              <col style={{ width: "10rem" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "12%" }} />
             </colgroup>
 
             <thead>
@@ -384,9 +435,9 @@ export default function PendingDepositsTable() {
                   </select>
                 </th>
                 <th>
-                  <th className="whitespace-nowrap">
-                    <button type="submit" className="rounded bg-blue-600 text-white px-3 py-1">submit</button>
-                  </th>
+                  <button type="submit" className="rounded bg-blue-600 text-white px-3 py-1">
+                    submit
+                  </button>
                 </th>
               </tr>
 
@@ -396,8 +447,8 @@ export default function PendingDepositsTable() {
                 <th className="text-left">Bank</th>
                 <th className="text-left">Amount</th>
                 <th className="text-left">Tgl</th>
-                <th className="text-left min-w-[7rem]">Status</th>
-                <th className="text-left min-w-[10rem]">Action</th>
+                <th className="text-left">Status</th>
+                <th className="text-left">Action</th>
               </tr>
             </thead>
 
@@ -424,21 +475,69 @@ export default function PendingDepositsTable() {
                         {r.assigned_deposit_id ? "Sudah di Assign" : "Sudah di Delete"}
                       </span>
                     ) : (
-                      <div className="inline-flex items-center gap-2 whitespace-nowrap">
-                        <button
-                          type="button"
-                          className="rounded bg-blue-600 text-white px-3 py-1 shrink-0"
-                          onClick={() => openAssign(r)}
-                        >
-                          Assign
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded bg-red-600 text-white px-3 py-1 shrink-0"
-                          onClick={() => openDelete(r)}
-                        >
-                          Delete
-                        </button>
+                      <div className="flex items-center gap-2">
+                        {roleLoading ? (
+                          <>
+                            <button
+                              type="button"
+                              className="rounded bg-blue-400 text-white px-3 py-1 opacity-60 cursor-not-allowed"
+                              disabled
+                              aria-disabled="true"
+                              title="Memuat role..."
+                            >
+                              Assign
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded bg-red-400 text-white px-3 py-1 opacity-60 cursor-not-allowed"
+                              disabled
+                              aria-disabled="true"
+                              title="Memuat role..."
+                            >
+                              Delete
+                            </button>
+                          </>
+                        ) : canAssignOrDelete ? (
+                          <>
+                            <button
+                              type="button"
+                              className="rounded bg-blue-600 text-white px-3 py-1"
+                              onClick={() => openAssign(r)}
+                              title="Assign ke member"
+                            >
+                              Assign
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded bg-red-600 text-white px-3 py-1"
+                              onClick={() => openDelete(r)}
+                              title="Delete Pending Deposit"
+                            >
+                              Delete
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="rounded bg-blue-400 text-white px-3 py-1 opacity-60 cursor-not-allowed"
+                              disabled
+                              aria-disabled="true"
+                              title="Unauthorized"
+                            >
+                              Assign
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded bg-red-400 text-white px-3 py-1 opacity-60 cursor-not-allowed"
+                              disabled
+                              aria-disabled="true"
+                              title="Unauthorized"
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
                       </div>
                     );
 
@@ -469,7 +568,7 @@ export default function PendingDepositsTable() {
                           .replace(":", ".")}
                       </td>
                       <td>{statusLabel}</td>
-                      <td className="whitespace-nowrap">{actionEl}</td>
+                      <td>{actionEl}</td>
                     </tr>
                   );
                 })
