@@ -28,7 +28,7 @@ type UserRow = {
   user_id: string;
   full_name: string;
   email: string;
-  role: string;         // admin | cs | viewer | (lainnya)
+  role: string;         // admin | cs | cs_dp | cs_wd | operator | viewer | (lainnya)
   is_resigned: boolean;
   created_at: string;
   total_count?: number; // dari window count
@@ -36,6 +36,24 @@ type UserRow = {
 
 type MyRole = "admin" | "cs" | "viewer" | "other";
 const PAGE_SIZE = 25;
+
+const ROLE_OPTIONS = [
+  { value: "admin",   label: "Admin" },
+  { value: "cs",      label: "CS" },
+  { value: "cs_dp",   label: "CS DP" },
+  { value: "cs_wd",   label: "CS WD" },
+  { value: "operator",label: "Operator" },
+  { value: "viewer",  label: "Viewer" },
+] as const;
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: "Admin",
+  cs: "CS",
+  cs_dp: "CS DP",
+  cs_wd: "CS WD",
+  operator: "Operator",
+  viewer: "Viewer",
+};
 
 /** ====== Helpers ====== */
 function normalizeRole(r?: string | null): MyRole {
@@ -85,16 +103,14 @@ export default function UserManagement() {
   const [nEmail, setNEmail] = useState("");
   const [nPwd, setNPwd] = useState("");
   const [nPwd2, setNPwd2] = useState("");
-  const [nIsAdmin, setNIsAdmin] = useState(false);
-  const [nIsCS, setNIsCS] = useState(false);
+  const [nRole, setNRole] = useState<string>("viewer");
   const newNameRef = useRef<HTMLInputElement | null>(null);
 
   // Edit
   const [eUserId, setEUserId] = useState("");
   const [eName, setEName] = useState("");
   const [eEmail, setEEmail] = useState("");
-  const [eIsAdmin, setEIsAdmin] = useState(false);
-  const [eIsCS, setEIsCS] = useState(false);
+  const [eRole, setERole] = useState<string>("viewer");
 
   // Change Password
   const [pUserId, setPUserId] = useState("");
@@ -190,8 +206,11 @@ export default function UserManagement() {
 
   /** ====== Handlers: open modals ====== */
   const openNew = () => {
-    setNName(""); setNEmail(""); setNPwd(""); setNPwd2("");
-    setNIsAdmin(false); setNIsCS(false);
+    setNName(""); 
+    setNEmail(""); 
+    setNPwd(""); 
+    setNPwd2("");
+    setNRole("viewer");
     setShowNew(true);
     setTimeout(() => newNameRef.current?.focus(), 0);
   };
@@ -200,15 +219,15 @@ export default function UserManagement() {
     setEUserId(u.user_id);
     setEName(u.full_name);
     setEEmail(u.email);
-    setEIsAdmin(u.role === "admin");
-    setEIsCS(u.role === "cs");
+    setERole((u.role ?? "viewer").toLowerCase());
     setShowEdit(true);
   };
 
   const openPwd = (u: UserRow) => {
     setPUserId(u.user_id);
     setPName(u.full_name);
-    setPPwd(""); setPPwd2("");
+    setPPwd(""); 
+    setPPwd2("");
     setShowPwd(true);
   };
 
@@ -223,7 +242,7 @@ export default function UserManagement() {
   const submitNew = async () => {
     if (!nName.trim() || !nEmail.trim() || !nPwd) { alert("Lengkapi Name, Email, Password"); return; }
     if (nPwd !== nPwd2) { alert("Konfirmasi password tidak sama"); return; }
-    const role = nIsAdmin ? "admin" : nIsCS ? "cs" : "viewer";
+    const role = (nRole || "viewer").toLowerCase();
 
     const res = await fetch("/api/admin/users/create", {
       method: "POST",
@@ -243,7 +262,7 @@ export default function UserManagement() {
   const submitEdit = async () => {
     if (!eUserId) return;
     if (!eName.trim() || !eEmail.trim()) { alert("Lengkapi Name & Email"); return; }
-    const role = eIsAdmin ? "admin" : eIsCS ? "cs" : "viewer";
+    const role = (eRole || "viewer").toLowerCase();
 
     const res = await fetch("/api/admin/users/update", {
       method: "POST",
@@ -291,7 +310,6 @@ export default function UserManagement() {
     return (
       <div className="p-6">
         <div className="text-red-600 font-semibold mb-2">Unauthorized</div>
-        <div>Halaman ini hanya untuk Admin.</div>
       </div>
     );
   }
@@ -313,7 +331,7 @@ export default function UserManagement() {
             <thead>
               {/* Top-right button */}
               <tr>
-                <th colSpan={7} className="text-right p-2">
+                <th colSpan={6} className="text-right p-2">
                   <button
                     type="button"
                     onClick={() => {
@@ -342,7 +360,6 @@ export default function UserManagement() {
                 <th />
                 <th />
                 <th />
-                <th />
                 <th className="text-right pr-3">
                   <button
                     className="rounded bg-blue-600 text-white px-3 py-1 disabled:opacity-60"
@@ -359,8 +376,7 @@ export default function UserManagement() {
                 <th className="text-left w-20">ID</th>
                 <th className="text-left w-[280px]">Name</th>
                 <th className="text-left w-[260px]">Email</th>
-                <th className="text-left w-24">Admin</th>
-                <th className="text-left w-24">CS</th>
+                <th className="text-left w-32">Role</th>
                 <th className="text-left w-36">Action</th>
                 <th className="text-left w-36">Created</th>
               </tr>
@@ -368,13 +384,13 @@ export default function UserManagement() {
 
             <tbody>
               {loading ? (
-                <tr><td colSpan={7}>Loading…</td></tr>
+                <tr><td colSpan={6}>Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={7}>No data</td></tr>
+                <tr><td colSpan={6}>No data</td></tr>
               ) : (
                 rows.map((u) => {
-                  const isAdmin = (u.role ?? "").toLowerCase() === "admin";
-                  const isCS = (u.role ?? "").toLowerCase() === "cs";
+                  const roleKey = (u.role ?? "").toLowerCase();
+                  const roleLabel = ROLE_LABELS[roleKey] ?? u.role ?? "";
                   const created = new Date(u.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" });
 
                   return (
@@ -382,8 +398,7 @@ export default function UserManagement() {
                       <td>{u.seq_id}</td>
                       <td className="whitespace-normal break-words">{u.full_name}</td>
                       <td className="whitespace-normal break-words">{u.email}</td>
-                      <td>{String(isAdmin)}</td>
-                      <td>{String(isCS)}</td>
+                      <td>{roleLabel}</td>
                       <td>
                         {u.is_resigned ? (
                           <span className="text-gray-500">RESIGN</span>
@@ -479,15 +494,17 @@ export default function UserManagement() {
                          value={nPwd2} onChange={(e)=>setNPwd2(e.target.value)} />
                 </div>
               </div>
-              <div className="flex items-center gap-6">
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={nIsCS} onChange={(e)=>setNIsCS(e.target.checked)} />
-                  <span>Is CS</span>
-                </label>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={nIsAdmin} onChange={(e)=>setNIsAdmin(e.target.checked)} />
-                  <span>Is Admin</span>
-                </label>
+              <div>
+                <label className="block text-xs mb-1">Role</label>
+                <select
+                  className="border rounded px-3 py-2 w-full"
+                  value={nRole}
+                  onChange={(e)=>setNRole(e.target.value)}
+                >
+                  {ROLE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
@@ -527,15 +544,17 @@ export default function UserManagement() {
                 <input className="border rounded px-3 py-2 w-full" type="email"
                        value={eEmail} onChange={(e)=>setEEmail(e.target.value)} />
               </div>
-              <div className="flex items-center gap-6">
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={eIsCS} onChange={(e)=>setEIsCS(e.target.checked)} />
-                  <span>Is CS</span>
-                </label>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={eIsAdmin} onChange={(e)=>setEIsAdmin(e.target.checked)} />
-                  <span>Is Admin</span>
-                </label>
+              <div>
+                <label className="block text-xs mb-1">Role</label>
+                <select
+                  className="border rounded px-3 py-2 w-full"
+                  value={eRole}
+                  onChange={(e)=>setERole(e.target.value)}
+                >
+                  {ROLE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
