@@ -5,7 +5,7 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 import { formatAmount } from "@/lib/format";
 
 // ----- Role helpers (samakan dengan Sidebar) -----
-type AppRole = "admin" | "cs" | "viewer";
+type AppRole = "admin" | "cs" | "cs_dp" | "cs_wd" | "operator" | "viewer";
 type AnyRole = AppRole | "other";
 
 type BankRow = {
@@ -123,6 +123,9 @@ function normalizeRole(r?: string | null): AnyRole {
   const v = (r || "").toLowerCase();
   if (v === "admin") return "admin";
   if (v === "cs" || v === "assops") return "cs";
+  if (v === "cs_dp") return "cs_dp";
+  if (v === "cs_wd") return "cs_wd";
+  if (v === "operator") return "operator";
   if (v === "viewer" || v === "agent") return "viewer";
   return "other";
 }
@@ -744,7 +747,7 @@ export default function BanksTable() {
 
     // Admin-only guard (selaras dengan Setting Potongan)
     if (role !== "admin") {
-      alert("Hanya admin yang bisa input Akuran.");
+      alert("Unauthorized");
       return;
     }
 
@@ -794,7 +797,7 @@ export default function BanksTable() {
     // ⬇️ guard: hanya admin yang boleh submit
     const role = (prof?.role ?? "").toLowerCase();
     if (role !== "admin") {
-      alert("Hanya admin yang bisa menyimpan Setting Potongan.");
+      alert("Unauthorized");
       return;
     }
 
@@ -836,42 +839,97 @@ export default function BanksTable() {
       (b) => b.is_active && (!from || b.id !== from.id)
     );
 
+  // ====== Role permissions per aksi ======
+  const canSettingPotongan = role === "admin";
+
+  const canNewBank =
+    role === "admin" || role === "operator";
+
+  const canDP =
+    role === "admin" || role === "operator" || role === "cs" || role === "cs_dp";
+
+  const canWD =
+    role === "admin" || role === "operator" || role === "cs" || role === "cs_wd";
+
+  const canPDP =
+    role === "admin" || role === "operator" || role === "cs" || role === "cs_dp";
+
+  const canTT =
+    role === "admin" ||
+    role === "operator" ||
+    role === "cs" ||
+    role === "cs_dp" ||
+    role === "cs_wd";
+
+  const canAdj =
+    role === "admin" || role === "operator";
+
+  const canExpense =
+    role === "admin" || role === "operator";
+
+  const canSettle = role === "admin";
+
   /* ================== RENDER ================== */
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-end gap-2">
+        {/* Setting Potongan -> hanya admin */}
         <button
           type="button"
           onClick={() => {
-            // guard terakhir di client
-            if (role !== "admin") {
-              alert("Hanya admin yang bisa membuka Setting Potongan.");
+            if (!canSettingPotongan || roleLoading) {
+              if (!roleLoading && !canSettingPotongan) {
+                alert("Unauthorized");
+              }
               return;
             }
             setShowSetting(true);
           }}
-          disabled={roleLoading || role !== "admin"}
-          aria-disabled={roleLoading || role !== "admin"}
-          className={`rounded bg-gray-100 px-4 py-2 ${
-            roleLoading || role !== "admin" ? "opacity-50 cursor-not-allowed" : ""
+          disabled={roleLoading || !canSettingPotongan}
+          aria-disabled={roleLoading || !canSettingPotongan}
+          className={`rounded px-4 py-2 ${
+            roleLoading || !canSettingPotongan
+              ? "bg-gray-100 opacity-50 cursor-not-allowed"
+              : "bg-gray-100"
           }`}
           title={
             roleLoading
               ? "Memuat role…"
-              : role !== "admin"
-              ? "Hanya admin yang bisa submit"
+              : !canSettingPotongan
+              ? "Unauthorized"
               : "Pengaturan dampak potongan langsung ke credit tenant"
           }
         >
           Setting Potongan → Credit
         </button>
+
+        {/* New Record -> admin & operator */}
         <button
           type="button"
           onClick={() => {
+            if (!canNewBank || roleLoading) {
+              if (!roleLoading && !canNewBank) {
+                alert("Unauthorized");
+              }
+              return;
+            }
             const evt = new CustomEvent("open-bank-new");
             document.dispatchEvent(evt);
           }}
-          className="rounded bg-green-600 text-white px-4 py-2"
+          disabled={roleLoading || !canNewBank}
+          aria-disabled={roleLoading || !canNewBank}
+          className={`rounded px-4 py-2 text-white ${
+            roleLoading || !canNewBank
+              ? "bg-green-400 opacity-60 cursor-not-allowed"
+              : "bg-green-600"
+          }`}
+          title={
+            roleLoading
+              ? "Memuat role…"
+              : !canNewBank
+              ? "Unauthorized"
+              : "Tambah bank baru"
+          }
         >
           New Record
         </button>
@@ -963,66 +1021,112 @@ export default function BanksTable() {
                     </td>
                     <td className="text-center">{tenantName || "-"}</td>
                     <td className="text-center">{formatAmount(r.balance)}</td>
+
+                    {/* Player Action: DP / WD / PDP */}
                     <td className="text-center">
                       <div className="inline-flex items-center gap-2">
-                        <button
-                          className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
-                          title="Deposit"
-                          onClick={() => openDPFor(r)}
-                        >
-                          DP
-                        </button>
-                        <button
-                          className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
-                          title="Withdraw"
-                          onClick={() => openWDFor(r)}
-                        >
-                          WD
-                        </button>
-                        <button
-                          className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
-                          title="Pending Deposit"
-                          onClick={() => openPDPFor(r)}
-                        >
-                          PDP
-                        </button>
+                        {/* DP = admin, operator, cs, cs_dp */}
+                        {roleLoading || !canDP ? (
+                          <DisabledBtn label="DP" title="Unauthorized" />
+                        ) : (
+                          <button
+                            className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                            title="Deposit"
+                            onClick={() => openDPFor(r)}
+                          >
+                            DP
+                          </button>
+                        )}
+
+                        {/* WD = admin, operator, cs, cs_wd */}
+                        {roleLoading || !canWD ? (
+                          <DisabledBtn label="WD" title="Unauthorized" />
+                        ) : (
+                          <button
+                            className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                            title="Withdraw"
+                            onClick={() => openWDFor(r)}
+                          >
+                            WD
+                          </button>
+                        )}
+
+                        {/* PDP = admin, operator, cs, cs_dp */}
+                        {roleLoading || !canPDP ? (
+                          <DisabledBtn label="PDP" title="Unauthorized" />
+                        ) : (
+                          <button
+                            className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                            title="Pending Deposit"
+                            onClick={() => openPDPFor(r)}
+                          >
+                            PDP
+                          </button>
+                        )}
                       </div>
                     </td>
+
+                    {/* CS Action: TT / Adj / Biaya / Akuran */}
                     <td className="text-center">
                       <div className="inline-flex items-center gap-2">
+                        {/* TT = admin, operator, cs, cs_dp, cs_wd */}
+                        {roleLoading || !canTT ? (
+                          <DisabledBtn label="TT" title="Unauthorized" />
+                        ) : (
+                          <button
+                            className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                            title="Interbank Transfer"
+                            onClick={() => openTTFor(r)}
+                          >
+                            TT
+                          </button>
+                        )}
+
+                        {/* Adj = admin, operator */}
+                        {roleLoading || !canAdj ? (
+                          <DisabledBtn label="Adj" title="Unauthorized" />
+                        ) : (
+                          <button
+                            className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                            title="Bank Adjustment"
+                            onClick={() => openAdjFor(r)}
+                          >
+                            Adj
+                          </button>
+                        )}
+
+                        {/* Biaya = admin, operator */}
+                        {roleLoading || !canExpense ? (
+                          <DisabledBtn label="Biaya" title="Unauthorized" />
+                        ) : (
+                          <button
+                            className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
+                            title="Biaya"
+                            onClick={() => openExpenseFor(r)}
+                          >
+                            Biaya
+                          </button>
+                        )}
+
+                        {/* Akuran = admin */}
                         <button
-                          className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
-                          title="Interbank Transfer"
-                          onClick={() => openTTFor(r)}
-                        >
-                          TT
-                        </button>
-                        <button
-                          className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
-                          title="Bank Adjustment"
-                          onClick={() => openAdjFor(r)}
-                        >
-                          Adj
-                        </button>
-                        <button
-                          className="h-8 min-w-[52px] px-3 rounded bg-blue-600 text-white"
-                          title="Biaya"
-                          onClick={() => openExpenseFor(r)}
-                        >
-                          Biaya
-                        </button>
-                        <button
-                          className="h-8 min-w-[72px] px-3 rounded bg-blue-600 text-white"
+                          className={`h-8 min-w-[72px] px-3 rounded text-white ${
+                            roleLoading || !canSettle
+                              ? "bg-blue-600 opacity-70 cursor-not-allowed"
+                              : "bg-blue-600"
+                          }`}
                           title="Akuran (Settlement)"
                           onClick={() => {
-                            if (role !== "admin") {
-                              alert("Hanya admin yang bisa input Akuran.");
+                            if (roleLoading || !canSettle) {
+                              if (!roleLoading && !canSettle) {
+                                alert("Unauthorized");
+                              }
                               return;
                             }
                             openSettleFor(r);
                           }}
-                          disabled={roleLoading || role !== "admin"}
-                          aria-disabled={roleLoading || role !== "admin"}
+                          disabled={roleLoading || !canSettle}
+                          aria-disabled={roleLoading || !canSettle}
                         >
                           Akuran
                         </button>
@@ -2346,7 +2450,7 @@ export default function BanksTable() {
                 className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
                 disabled={dpGuard.submitting || role !== "admin"}
                 aria-disabled={dpGuard.submitting || role !== "admin"}
-                title={role !== "admin" ? "Hanya admin yang bisa submit" : (dpGuard.submitting ? "Submitting..." : "Submit")}
+                title={role !== "admin" ? "Unauthorized" : (dpGuard.submitting ? "Submitting..." : "Submit")}
               >
                 {dpGuard.submitting ? "Submitting…" : "Submit"}
               </button>
