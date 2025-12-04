@@ -20,7 +20,12 @@ type SettlementRow = {
   created_by: string;
 };
 
-type BankLite = { id: number; bank_code: string; account_name: string; account_no: string };
+type BankLite = {
+  id: number;
+  bank_code: string;
+  account_name: string;
+  account_no: string;
+};
 type ProfileLite = { user_id: string; full_name: string | null };
 
 function fmtIdDateTime(d: string) {
@@ -34,8 +39,29 @@ function fmtIdDateTime(d: string) {
 
 const PAGE_SIZE = 25;
 
+// ===== Role helpers (samakan dengan Banks & UserManagement) =====
+type AppRole = "admin" | "cs" | "cs_dp" | "cs_wd" | "operator" | "viewer";
+type AnyRole = AppRole | "other";
+
+function normalizeRole(r?: string | null): AnyRole {
+  const v = (r || "").toLowerCase();
+  if (v === "admin") return "admin";
+  if (v === "cs" || v === "assops") return "cs";
+  if (v === "cs_dp") return "cs_dp";
+  if (v === "cs_wd") return "cs_wd";
+  if (v === "operator") return "operator";
+  if (v === "viewer" || v === "agent") return "viewer";
+  return "other";
+}
+
 export default function SettlementsTable() {
   const supabase = supabaseBrowser();
+
+  // ===== Guard: hanya Admin (Akuran) =====
+  const [authorized, setAuthorized] = useState<"loading" | "ok" | "no">(
+    "loading",
+  );
+  const [myRole, setMyRole] = useState<AnyRole>("other");
 
   const [rows, setRows] = useState<SettlementRow[]>([]);
   const [banksMap, setBanksMap] = useState<Record<number, BankLite>>({});
@@ -47,6 +73,42 @@ export default function SettlementsTable() {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  // Bootstrap role
+  useEffect(() => {
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        setAuthorized("no");
+        return;
+      }
+
+      const { data: prof, error } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("user_id", user.id)
+        .single();
+
+      if (error) {
+        console.error("profiles role error (Settlements):", error);
+        setAuthorized("no");
+        return;
+      }
+
+      const role = normalizeRole((prof as any)?.role);
+      setMyRole(role);
+
+      // Akuran page: hanya admin
+      if (role === "admin") {
+        setAuthorized("ok");
+      } else {
+        setAuthorized("no");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const load = async (pageToLoad = page) => {
     setLoading(true);
 
@@ -57,7 +119,7 @@ export default function SettlementsTable() {
       .from("settlements")
       .select(
         "id, bank_id, entry, amount, fee, description, target_bank_provider, target_account_name, target_account_number, txn_at, performed_at, created_by",
-        { count: "exact" }
+        { count: "exact" },
       )
       .order("performed_at", { ascending: false })
       .order("id", { ascending: false })
@@ -102,7 +164,7 @@ export default function SettlementsTable() {
 
     const profs = (profRes.data as ProfileLite[]) ?? [];
     setProfilesMap(
-      Object.fromEntries(profs.map((p) => [p.user_id, p.full_name ?? p.user_id]))
+      Object.fromEntries(profs.map((p) => [p.user_id, p.full_name ?? p.user_id])),
     );
 
     // Brand/Website = tenant user aktif
@@ -126,16 +188,33 @@ export default function SettlementsTable() {
     setLoading(false);
   };
 
+  // Load data hanya setelah authorized OK
   useEffect(() => {
-    load(1);
+    if (authorized === "ok") {
+      load(1);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [authorized]);
 
   const bankLabel = (id: number) => {
     const b = banksMap[id];
     return b ? `[${b.bank_code}] ${b.account_name} - ${b.account_no}` : "—";
   };
 
+  // ===== Guard render =====
+  if (authorized === "loading") {
+    return <div className="p-6">Loading…</div>;
+  }
+
+  if (authorized === "no") {
+    return (
+      <div className="p-6">
+        <div className="text-red-600 font-semibold mb-2">Unauthorized</div>
+      </div>
+    );
+  }
+
+  // ===== Normal render (authorized) =====
   return (
     <div className="space-y-3">
       <div className="rounded border bg-white p-3">
@@ -143,7 +222,10 @@ export default function SettlementsTable() {
       </div>
 
       <div className="overflow-auto rounded border bg-white">
-        <table className="table-grid min-w-[1200px]" style={{ borderCollapse: "collapse" }}>
+        <table
+          className="table-grid min-w-[1200px]"
+          style={{ borderCollapse: "collapse" }}
+        >
           <thead>
             {/* HEADER (tanpa filter, mengikuti gaya Interbank) */}
             <tr>
@@ -177,8 +259,12 @@ export default function SettlementsTable() {
                   <td>{r.description ?? ""}</td>
                   <td>
                     {r.target_bank_provider}
-                    {r.target_account_name ? ` - ${r.target_account_name}` : ""}
-                    {r.target_account_number ? ` - ${r.target_account_number}` : ""}
+                    {r.target_account_name
+                      ? ` - ${r.target_account_name}`
+                      : ""}
+                    {r.target_account_number
+                      ? ` - ${r.target_account_number}`
+                      : ""}
                   </td>
                   <td>{fmtIdDateTime(r.performed_at)}</td>
                   <td>{profilesMap[r.created_by] ?? r.created_by}</td>
