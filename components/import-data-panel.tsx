@@ -785,11 +785,6 @@ export default function ImportDataPanel() {
                 <option value="withdrawals">Withdrawals</option>
                 <option value="both">Deposit + Withdraw</option>
               </select>
-              <div className="text-[11px] text-gray-500">
-                Matching = periode + <span className="font-mono">SUM per username</span>.
-                Action harus persis <span className="font-mono">Approved</span>,
-                status bracket harus <span className="font-mono">posted</span>.
-              </div>
             </div>
 
             <div className="flex items-center gap-2">
@@ -835,9 +830,6 @@ export default function ImportDataPanel() {
                 value={endLocal}
                 onChange={(e) => setEndLocal(e.target.value)}
               />
-            </div>
-            <div className="text-[11px] text-gray-500 md:pt-6">
-              Tip: pakai periode request (mis. 01:00–06:00) untuk tahu username mana yang totalnya belum sinkron.
             </div>
           </div>
 
