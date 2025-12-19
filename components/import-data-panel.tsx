@@ -38,7 +38,7 @@ type DetectedMapping = {
 type ParsedRow = {
   idx: number; // 1-based
   username: string;
-  amount: number | null;
+  amountCents: number | null;
   approved: boolean;
   approveAtUtcMs: number | null;
   approveAtJakarta: string | null;
@@ -54,15 +54,6 @@ type SupaTxn = {
   status: "posted" | "reversed";
 };
 
-type MatchStatus = "MATCHED" | "MISSING_IN_BRACKET" | "IGNORED" | "OUTSIDE_PERIOD" | "INVALID";
-
-type MatchRow = {
-  kind: Kind;
-  exportRow: ParsedRow;
-  status: MatchStatus;
-  matched?: SupaTxn | null;
-};
-
 type UploadState = {
   file?: File | null;
   sheet?: SheetData | null;
@@ -70,6 +61,19 @@ type UploadState = {
   parsed?: ParsedRow[] | null;
   error?: string | null;
   mappingOk?: boolean;
+};
+
+type AggStatus = "MATCHED" | "MISSING_IN_BRACKET" | "EXTRA_IN_BRACKET";
+
+type AggRow = {
+  kind: Kind;
+  username: string;
+  panelCount: number;
+  bracketCount: number;
+  panelSumCents: number;
+  bracketSumCents: number;
+  diffCents: number; // panel - bracket (bisa minus)
+  status: AggStatus;
 };
 
 function normHeader(s: string) {
@@ -80,12 +84,10 @@ function pickHeader(headers: string[], synonyms: string[]): string | "" {
   const H = headers.map((h) => ({ h, n: normHeader(h) }));
   const syn = synonyms.map(normHeader);
 
-  // exact
   for (const s of syn) {
     const hit = H.find((x) => x.n === s);
     if (hit) return hit.h;
   }
-  // contains
   for (const s of syn) {
     const hit = H.find((x) => x.n.includes(s));
     if (hit) return hit.h;
@@ -93,21 +95,24 @@ function pickHeader(headers: string[], synonyms: string[]): string | "" {
   return "";
 }
 
-function parseAmount(v: any): number | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  const s = String(v).trim();
-  if (!s) return null;
-  const n = Number(s.replace(/,/g, ""));
-  return Number.isFinite(n) ? n : null;
-}
-
 function normalizeUsername(v: any) {
   return String(v ?? "").trim().toLowerCase();
 }
 
+function parseAmountToCents(v: any): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number" && Number.isFinite(v)) {
+    return Math.round(v * 100);
+  }
+  const s = String(v).trim();
+  if (!s) return null;
+  const n = Number(s.replace(/,/g, ""));
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 100);
+}
+
 /**
- * STRICT sesuai request: Action harus persis "Approved" (case-insensitive).
+ * STRICT sesuai request: Action harus persis "Approved" (case-insensitive)
  */
 function isApprovedStrict(actionVal: any): boolean {
   const s = String(actionVal ?? "").trim().toLowerCase();
@@ -115,8 +120,7 @@ function isApprovedStrict(actionVal: any): boolean {
 }
 
 /**
- * Panel export: "YYYY-MM-DD HH:mm:ss" (tanpa timezone).
- * Dianggap waktu Asia/Jakarta.
+ * Panel export: "YYYY-MM-DD HH:mm:ss" dianggap Asia/Jakarta.
  * Convert ke UTC ms: UTC = local - 7 jam.
  */
 function jakartaLocalStrToUtcMs(s: string): number | null {
@@ -144,34 +148,7 @@ function formatJakartaFromUtcMs(ms: number): string {
   });
 }
 
-function formatJakartaFromISO(iso: string): string {
-  return new Date(iso).toLocaleString("sv-SE", {
-    timeZone: "Asia/Jakarta",
-    hour12: false,
-  });
-}
-
-/**
- * datetime-local input: "YYYY-MM-DDTHH:mm"
- * Dianggap Asia/Jakarta.
- */
-function jakartaLocalInputToUtcMs(value: string): number | null {
-  const m = String(value)
-    .trim()
-    .match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
-  if (!m) return null;
-  const year = Number(m[1]);
-  const month = Number(m[2]);
-  const day = Number(m[3]);
-  const hour = Number(m[4]);
-  const minute = Number(m[5]);
-  if (![year, month, day, hour, minute].every(Number.isFinite)) return null;
-
-  return Date.UTC(year, month - 1, day, hour - 7, minute, 0, 0);
-}
-
 function toDatetimeLocalJakartaNow(): string {
-  // buat default input (JKT) tanpa bergantung timezone OS
   const nowJkt = new Date(
     new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" }),
   );
@@ -191,6 +168,26 @@ function toDatetimeLocalJakartaStartOfDay(): string {
   const m = String(nowJkt.getMonth() + 1).padStart(2, "0");
   const d = String(nowJkt.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}T00:00`;
+}
+
+/**
+ * datetime-local input: "YYYY-MM-DDTHH:mm" dianggap Asia/Jakarta.
+ */
+function jakartaLocalInputToUtcMs(value: string): number | null {
+  const m = String(value)
+    .trim()
+    .match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (!m) return null;
+
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const hour = Number(m[4]);
+  const minute = Number(m[5]);
+
+  if (![year, month, day, hour, minute].every(Number.isFinite)) return null;
+
+  return Date.UTC(year, month - 1, day, hour - 7, minute, 0, 0);
 }
 
 async function readXlsx(file: File): Promise<SheetData> {
@@ -267,8 +264,8 @@ function parseRows(sheet: SheetData, mapping: DetectedMapping): ParsedRow[] {
     const username = normalizeUsername(raw[mapping.usernameCol]);
     if (!username) issues.push("username kosong");
 
-    const amount = parseAmount(raw[mapping.amountCol]);
-    if (amount === null) issues.push("amount invalid");
+    const amountCents = parseAmountToCents(raw[mapping.amountCol]);
+    if (amountCents === null) issues.push("amount invalid");
 
     const approved = isApprovedStrict(raw[mapping.actionCol]);
 
@@ -280,7 +277,7 @@ function parseRows(sheet: SheetData, mapping: DetectedMapping): ParsedRow[] {
     out.push({
       idx: i + 1,
       username,
-      amount,
+      amountCents,
       approved,
       approveAtUtcMs,
       approveAtJakarta,
@@ -326,60 +323,90 @@ async function fetchAllTxns(
   return all;
 }
 
-function normAmtKey(n: number) {
-  // biar 53000 == 53000.00
-  return Number(n).toFixed(2);
+function buildPanelAgg(parsed: ParsedRow[], startUtcMs: number, endUtcMs: number) {
+  const map = new Map<string, { count: number; sumCents: number }>();
+
+  let approvedTotal = 0;
+  let ignored = 0;
+  let invalidApproved = 0;
+  let outsideApproved = 0;
+
+  for (const r of parsed) {
+    if (!r.approved) {
+      ignored++;
+      continue;
+    }
+    approvedTotal++;
+
+    if (r.issues.length > 0 || r.amountCents == null || r.approveAtUtcMs == null) {
+      invalidApproved++;
+      continue;
+    }
+    if (r.approveAtUtcMs < startUtcMs || r.approveAtUtcMs > endUtcMs) {
+      outsideApproved++;
+      continue;
+    }
+
+    const u = r.username;
+    const prev = map.get(u) ?? { count: 0, sumCents: 0 };
+    map.set(u, {
+      count: prev.count + 1,
+      sumCents: prev.sumCents + r.amountCents,
+    });
+  }
+
+  return { map, approvedTotal, ignored, invalidApproved, outsideApproved };
 }
 
-function buildSupaBucket(txns: SupaTxn[]) {
-  const map = new Map<string, SupaTxn[]>();
+function buildBracketAgg(txns: SupaTxn[]) {
+  const map = new Map<string, { count: number; sumCents: number }>();
   for (const t of txns) {
     const u = normalizeUsername(t.username);
-    const a = normAmtKey(Number(t.amount_gross ?? 0));
-    const k = `${u}|${a}`;
-    if (!map.has(k)) map.set(k, []);
-    map.get(k)!.push(t);
+    const cents = Math.round(Number(t.amount_gross ?? 0) * 100);
+    const prev = map.get(u) ?? { count: 0, sumCents: 0 };
+    map.set(u, { count: prev.count + 1, sumCents: prev.sumCents + cents });
   }
   return map;
 }
 
-function matchWithinPeriod(kind: Kind, parsed: ParsedRow[], startUtcMs: number, endUtcMs: number, supaTxns: SupaTxn[]) {
-  const bucket = buildSupaBucket(supaTxns);
-  const bucketClone = new Map<string, SupaTxn[]>();
-  for (const [k, v] of bucket.entries()) bucketClone.set(k, [...v]);
+function matchAgg(kind: Kind, parsed: ParsedRow[], startUtcMs: number, endUtcMs: number, bracketTxns: SupaTxn[]) {
+  const panel = buildPanelAgg(parsed, startUtcMs, endUtcMs);
+  const bracketMap = buildBracketAgg(bracketTxns);
 
-  const results: MatchRow[] = [];
+  const users = new Set<string>([...panel.map.keys(), ...bracketMap.keys()]);
+  const rows: AggRow[] = [];
 
-  for (const r of parsed) {
-    if (!r.approved) {
-      results.push({ kind, exportRow: r, status: "IGNORED" });
-      continue;
-    }
-    if (r.issues.length > 0 || r.amount == null || r.approveAtUtcMs == null) {
-      results.push({ kind, exportRow: r, status: "INVALID" });
-      continue;
-    }
-    if (r.approveAtUtcMs < startUtcMs || r.approveAtUtcMs > endUtcMs) {
-      results.push({ kind, exportRow: r, status: "OUTSIDE_PERIOD" });
-      continue;
-    }
+  for (const username of Array.from(users).sort()) {
+    const p = panel.map.get(username) ?? { count: 0, sumCents: 0 };
+    const b = bracketMap.get(username) ?? { count: 0, sumCents: 0 };
 
-    const k = `${r.username}|${normAmtKey(r.amount)}`;
-    const list = bucketClone.get(k) ?? [];
-    if (list.length > 0) {
-      const matched = list.shift()!;
-      bucketClone.set(k, list);
-      results.push({ kind, exportRow: r, status: "MATCHED", matched });
-    } else {
-      results.push({ kind, exportRow: r, status: "MISSING_IN_BRACKET" });
-    }
+    const diff = p.sumCents - b.sumCents;
+    let status: AggStatus = "MATCHED";
+    if (diff > 0) status = "MISSING_IN_BRACKET";
+    else if (diff < 0) status = "EXTRA_IN_BRACKET";
+
+    rows.push({
+      kind,
+      username,
+      panelCount: p.count,
+      bracketCount: b.count,
+      panelSumCents: p.sumCents,
+      bracketSumCents: b.sumCents,
+      diffCents: diff,
+      status,
+    });
   }
 
-  // extras: supabase posted dalam periode tapi tidak kepakai buat match
-  const extras: SupaTxn[] = [];
-  for (const v of bucketClone.values()) extras.push(...v);
-
-  return { results, extras };
+  return {
+    rows,
+    meta: {
+      panelApprovedTotal: panel.approvedTotal,
+      panelIgnored: panel.ignored,
+      panelInvalidApproved: panel.invalidApproved,
+      panelOutsideApproved: panel.outsideApproved,
+      bracketPostedTotal: bracketTxns.length,
+    },
+  };
 }
 
 function Badge({
@@ -417,11 +444,10 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 
 function UploadSimple(props: {
   title: string;
-  kind: Kind;
   state: UploadState;
   setState: (fn: (prev: UploadState) => UploadState) => void;
 }) {
-  const { title, kind, state, setState } = props;
+  const { title, state, setState } = props;
 
   const info = useMemo(() => {
     const rows = state.parsed ?? [];
@@ -495,33 +521,33 @@ function UploadSimple(props: {
   );
 }
 
-function ResultsTable({
+function ResultsAggTable({
   title,
   rows,
-  extras,
+  meta,
 }: {
   title: string;
-  rows: MatchRow[];
-  extras: SupaTxn[];
+  rows: AggRow[];
+  meta: {
+    panelApprovedTotal: number;
+    panelIgnored: number;
+    panelInvalidApproved: number;
+    panelOutsideApproved: number;
+    bracketPostedTotal: number;
+  };
 }) {
-  const [view, setView] = useState<"MISSING" | "MATCHED" | "ALL">("MISSING");
+  const [view, setView] = useState<"MISSING" | "EXTRA" | "MATCHED" | "ALL">("MISSING");
 
   const summary = useMemo(() => {
-    const totalApproved = rows.filter((r) => r.exportRow.approved).length;
-    const inPeriod = rows.filter(
-      (r) => r.exportRow.approved && r.status !== "OUTSIDE_PERIOD" && r.status !== "INVALID",
-    ).length;
-    const missing = rows.filter((r) => r.status === "MISSING_IN_BRACKET").length;
     const matched = rows.filter((r) => r.status === "MATCHED").length;
-    const ignored = rows.filter((r) => r.status === "IGNORED").length;
-    const outside = rows.filter((r) => r.status === "OUTSIDE_PERIOD").length;
-    const invalid = rows.filter((r) => r.status === "INVALID").length;
-
-    return { totalApproved, inPeriod, missing, matched, ignored, outside, invalid, extras: extras.length };
-  }, [rows, extras]);
+    const missing = rows.filter((r) => r.status === "MISSING_IN_BRACKET").length;
+    const extra = rows.filter((r) => r.status === "EXTRA_IN_BRACKET").length;
+    return { users: rows.length, matched, missing, extra };
+  }, [rows]);
 
   const filtered = useMemo(() => {
     if (view === "MISSING") return rows.filter((r) => r.status === "MISSING_IN_BRACKET");
+    if (view === "EXTRA") return rows.filter((r) => r.status === "EXTRA_IN_BRACKET");
     if (view === "MATCHED") return rows.filter((r) => r.status === "MATCHED");
     return rows;
   }, [rows, view]);
@@ -530,14 +556,17 @@ function ResultsTable({
     <Card title={title}>
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <Badge tone="blue">Approved: {summary.totalApproved}</Badge>
-          <Badge tone="gray">In period: {summary.inPeriod}</Badge>
-          <Badge tone="red">Missing: {summary.missing}</Badge>
+          <Badge tone="blue">Users: {summary.users}</Badge>
           <Badge tone="green">Matched: {summary.matched}</Badge>
-          <Badge tone="gray">Ignored: {summary.ignored}</Badge>
-          <Badge tone="amber">Outside: {summary.outside}</Badge>
-          <Badge tone="amber">Invalid: {summary.invalid}</Badge>
-          <Badge tone="gray">Extra bracket: {summary.extras}</Badge>
+          <Badge tone="red">Missing: {summary.missing}</Badge>
+          <Badge tone="amber">Extra: {summary.extra}</Badge>
+          <Badge tone="gray">Panel approved rows: {meta.panelApprovedTotal}</Badge>
+          <Badge tone="gray">Bracket posted rows: {meta.bracketPostedTotal}</Badge>
+        </div>
+
+        <div className="text-[11px] text-gray-500">
+          Panel ignored(non-approved): {meta.panelIgnored} • Invalid(approved): {meta.panelInvalidApproved} •
+          Outside(approved): {meta.panelOutsideApproved}
         </div>
 
         <div className="flex items-center gap-2">
@@ -548,6 +577,7 @@ function ResultsTable({
             onChange={(e) => setView(e.target.value as any)}
           >
             <option value="MISSING">Missing only</option>
+            <option value="EXTRA">Extra only</option>
             <option value="MATCHED">Matched only</option>
             <option value="ALL">All (debug)</option>
           </select>
@@ -557,13 +587,13 @@ function ResultsTable({
           <table className="table-grid">
             <thead>
               <tr>
-                <th className="text-left">#</th>
                 <th className="text-left">Username</th>
-                <th className="text-right">Amount</th>
-                <th className="text-left">Approve Date (JKT)</th>
+                <th className="text-right">Panel Total</th>
+                <th className="text-right">Bracket Total</th>
+                <th className="text-right">Diff</th>
                 <th className="text-left">Status</th>
-                <th className="text-left">Bracket ID</th>
-                <th className="text-left">Bracket txn_at (JKT)</th>
+                <th className="text-right">Panel Cnt</th>
+                <th className="text-right">Bracket Cnt</th>
               </tr>
             </thead>
             <tbody>
@@ -573,32 +603,27 @@ function ResultsTable({
                     ? "green"
                     : r.status === "MISSING_IN_BRACKET"
                       ? "red"
-                      : r.status === "IGNORED"
-                        ? "gray"
-                        : r.status === "OUTSIDE_PERIOD"
-                          ? "amber"
-                          : "amber";
+                      : "amber";
+
+                const diffAbs = Math.abs(r.diffCents);
 
                 return (
-                  <tr key={`${r.kind}-${r.exportRow.idx}`}>
-                    <td className="mono">{r.exportRow.idx}</td>
-                    <td className="mono">{r.exportRow.username}</td>
+                  <tr key={`${r.kind}-${r.username}`}>
+                    <td className="mono">{r.username}</td>
+                    <td className="t-right mono">{formatAmount(r.panelSumCents / 100)}</td>
+                    <td className="t-right mono">{formatAmount(r.bracketSumCents / 100)}</td>
                     <td className="t-right mono">
-                      {r.exportRow.amount == null ? "-" : formatAmount(r.exportRow.amount)}
+                      {r.diffCents === 0
+                        ? formatAmount(0)
+                        : r.diffCents > 0
+                          ? `-${formatAmount(diffAbs / 100)}`
+                          : `+${formatAmount(diffAbs / 100)}`}
                     </td>
-                    <td className="mono">{r.exportRow.approveAtJakarta ?? "-"}</td>
                     <td>
                       <Badge tone={tone as any}>{r.status}</Badge>
-                      {r.status === "INVALID" && r.exportRow.issues.length > 0 && (
-                        <div className="text-[11px] text-amber-800 mt-1">
-                          {r.exportRow.issues.join(", ")}
-                        </div>
-                      )}
                     </td>
-                    <td className="mono">{r.matched?.id ?? "-"}</td>
-                    <td className="mono">
-                      {r.matched ? formatJakartaFromISO(r.matched.txn_at) : "-"}
-                    </td>
+                    <td className="t-right mono">{r.panelCount}</td>
+                    <td className="t-right mono">{r.bracketCount}</td>
                   </tr>
                 );
               })}
@@ -612,37 +637,6 @@ function ResultsTable({
             </tbody>
           </table>
         </div>
-
-        {/* Optional: transaksi bracket yang "extra" dalam periode */}
-        {extras.length > 0 && (
-          <details className="rounded border p-3">
-            <summary className="cursor-pointer text-sm font-medium">
-              Extra in Bracket (posted dalam periode tapi tidak match ke panel)
-            </summary>
-            <div className="mt-3 overflow-x-auto rounded border">
-              <table className="table-grid">
-                <thead>
-                  <tr>
-                    <th className="text-left">ID</th>
-                    <th className="text-left">Username</th>
-                    <th className="text-right">Amount</th>
-                    <th className="text-left">txn_at (JKT)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {extras.map((t) => (
-                    <tr key={t.id}>
-                      <td className="mono">{t.id}</td>
-                      <td className="mono">{normalizeUsername(t.username)}</td>
-                      <td className="t-right mono">{formatAmount(Number(t.amount_gross ?? 0))}</td>
-                      <td className="mono">{formatJakartaFromISO(t.txn_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
-        )}
       </div>
     </Card>
   );
@@ -651,7 +645,6 @@ function ResultsTable({
 export default function ImportDataPanel() {
   const supabase = supabaseBrowser();
 
-  // Guard role (sesuai kebutuhan)
   const [authorized, setAuthorized] = useState<"loading" | "ok" | "no">("loading");
   const [role, setRole] = useState<AnyRole>("other");
 
@@ -687,7 +680,6 @@ export default function ImportDataPanel() {
 
   const [mode, setMode] = useState<ImportMode>("deposits");
 
-  // Period input (JKT)
   const [startLocal, setStartLocal] = useState<string>(toDatetimeLocalJakartaStartOfDay());
   const [endLocal, setEndLocal] = useState<string>(toDatetimeLocalJakartaNow());
 
@@ -697,10 +689,8 @@ export default function ImportDataPanel() {
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
 
-  const [depRows, setDepRows] = useState<MatchRow[] | null>(null);
-  const [wdRows, setWdRows] = useState<MatchRow[] | null>(null);
-  const [depExtras, setDepExtras] = useState<SupaTxn[]>([]);
-  const [wdExtras, setWdExtras] = useState<SupaTxn[]>([]);
+  const [depAgg, setDepAgg] = useState<{ rows: AggRow[]; meta: any } | null>(null);
+  const [wdAgg, setWdAgg] = useState<{ rows: AggRow[]; meta: any } | null>(null);
 
   const lastRunRef = useRef(0);
 
@@ -737,35 +727,26 @@ export default function ImportDataPanel() {
 
     try {
       const startIso = new Date(startUtcMs).toISOString();
-      // inclusive end: tambah 59 detik supaya periode menit terakhir kebawa
-      const endIso = new Date(endUtcMs + 59_000).toISOString();
+      const endIso = new Date(endUtcMs + 59_000).toISOString(); // inclusive last minute
 
       if (mode === "deposits" || mode === "both") {
         const parsed = depState.parsed ?? [];
-        const supa = await fetchAllTxns(supabase, "deposits", startIso, endIso);
-        const { results, extras } = matchWithinPeriod("deposits", parsed, startUtcMs, endUtcMs + 59_000, supa);
+        const bracketTxns = await fetchAllTxns(supabase, "deposits", startIso, endIso);
+        const out = matchAgg("deposits", parsed, startUtcMs, endUtcMs + 59_000, bracketTxns);
 
-        if (lastRunRef.current === runId) {
-          setDepRows(results);
-          setDepExtras(extras);
-        }
+        if (lastRunRef.current === runId) setDepAgg(out);
       } else {
-        setDepRows(null);
-        setDepExtras([]);
+        setDepAgg(null);
       }
 
       if (mode === "withdrawals" || mode === "both") {
         const parsed = wdState.parsed ?? [];
-        const supa = await fetchAllTxns(supabase, "withdrawals", startIso, endIso);
-        const { results, extras } = matchWithinPeriod("withdrawals", parsed, startUtcMs, endUtcMs + 59_000, supa);
+        const bracketTxns = await fetchAllTxns(supabase, "withdrawals", startIso, endIso);
+        const out = matchAgg("withdrawals", parsed, startUtcMs, endUtcMs + 59_000, bracketTxns);
 
-        if (lastRunRef.current === runId) {
-          setWdRows(results);
-          setWdExtras(extras);
-        }
+        if (lastRunRef.current === runId) setWdAgg(out);
       } else {
-        setWdRows(null);
-        setWdExtras([]);
+        setWdAgg(null);
       }
     } catch (e: any) {
       setRunError(e?.message || "Gagal run match");
@@ -799,10 +780,8 @@ export default function ImportDataPanel() {
                 value={mode}
                 onChange={(e) => {
                   setMode(e.target.value as ImportMode);
-                  setDepRows(null);
-                  setWdRows(null);
-                  setDepExtras([]);
-                  setWdExtras([]);
+                  setDepAgg(null);
+                  setWdAgg(null);
                   setRunError(null);
                 }}
               >
@@ -811,10 +790,9 @@ export default function ImportDataPanel() {
                 <option value="both">Deposit + Withdraw</option>
               </select>
               <div className="text-[11px] text-gray-500">
-                Matching = <b>periode</b> (Approve Date panel & txn_at bracket harus sama-sama di range) + key{" "}
-                <span className="font-mono">username + amount_gross</span>. Action harus persis{" "}
-                <span className="font-mono">Approved</span>, status bracket harus{" "}
-                <span className="font-mono">posted</span>.
+                Matching = periode + <span className="font-mono">SUM per username</span>.
+                Action harus persis <span className="font-mono">Approved</span>,
+                status bracket harus <span className="font-mono">posted</span>.
               </div>
             </div>
 
@@ -832,10 +810,8 @@ export default function ImportDataPanel() {
                 type="button"
                 className="rounded border px-4 py-2 text-sm hover:bg-gray-50"
                 onClick={() => {
-                  setDepRows(null);
-                  setWdRows(null);
-                  setDepExtras([]);
-                  setWdExtras([]);
+                  setDepAgg(null);
+                  setWdAgg(null);
                   setRunError(null);
                 }}
                 disabled={running}
@@ -845,7 +821,6 @@ export default function ImportDataPanel() {
             </div>
           </div>
 
-          {/* Period inputs (JKT) */}
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div>
               <label className="block text-xs text-gray-600 mb-1">Start (Asia/Jakarta)</label>
@@ -866,7 +841,7 @@ export default function ImportDataPanel() {
               />
             </div>
             <div className="text-[11px] text-gray-500 md:pt-6">
-              Tip: ini dipakai untuk “request import jam sekian–sekian” agar ketahuan transaksi panel mana yang belum tercatat.
+              Tip: pakai periode request (mis. 01:00–06:00) untuk tahu username mana yang totalnya belum sinkron.
             </div>
           </div>
 
@@ -877,7 +852,6 @@ export default function ImportDataPanel() {
       {(mode === "deposits" || mode === "both") && (
         <UploadSimple
           title="Upload Export Deposits"
-          kind="deposits"
           state={depState}
           setState={(fn) => setDepState((p) => fn(p))}
         />
@@ -886,18 +860,17 @@ export default function ImportDataPanel() {
       {(mode === "withdrawals" || mode === "both") && (
         <UploadSimple
           title="Upload Export Withdrawals"
-          kind="withdrawals"
           state={wdState}
           setState={(fn) => setWdState((p) => fn(p))}
         />
       )}
 
-      {(mode === "deposits" || mode === "both") && depRows && (
-        <ResultsTable title="Results: Deposits" rows={depRows} extras={depExtras} />
+      {(mode === "deposits" || mode === "both") && depAgg && (
+        <ResultsAggTable title="Results: Deposits" rows={depAgg.rows} meta={depAgg.meta} />
       )}
 
-      {(mode === "withdrawals" || mode === "both") && wdRows && (
-        <ResultsTable title="Results: Withdrawals" rows={wdRows} extras={wdExtras} />
+      {(mode === "withdrawals" || mode === "both") && wdAgg && (
+        <ResultsAggTable title="Results: Withdrawals" rows={wdAgg.rows} meta={wdAgg.meta} />
       )}
     </div>
   );
