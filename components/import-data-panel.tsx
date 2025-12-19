@@ -28,7 +28,7 @@ type SheetData = {
   sheetName: string;
 };
 
-type ColumnMapping = {
+type DetectedMapping = {
   usernameCol: string;
   amountCol: string;
   actionCol: string;
@@ -36,16 +36,12 @@ type ColumnMapping = {
 };
 
 type ParsedRow = {
-  idx: number; // 1-based row number in data array
-  usernameRaw: any;
+  idx: number; // 1-based
   username: string;
-  amountRaw: any;
   amount: number | null;
-  actionRaw: any;
   approved: boolean;
-  approveAtRaw: any;
-  approveAtJakarta: string | null; // "YYYY-MM-DD HH:mm:ss" in Asia/Jakarta
   approveAtUtcMs: number | null;
+  approveAtJakarta: string | null;
   issues: string[];
   raw: Record<string, any>;
 };
@@ -58,41 +54,38 @@ type SupaTxn = {
   status: "posted" | "reversed";
 };
 
-type MatchStatus =
-  | "MATCHED"
-  | "NOT_FOUND"
-  | "IGNORED_NOT_APPROVED"
-  | "INVALID_ROW";
+type MatchStatus = "MATCHED" | "MISSING_IN_BRACKET" | "IGNORED" | "OUTSIDE_PERIOD" | "INVALID";
 
 type MatchRow = {
   kind: Kind;
   exportRow: ParsedRow;
   status: MatchStatus;
   matched?: SupaTxn | null;
-  suggestion?: {
-    reason: "TIME_MISMATCH" | "AMOUNT_MISMATCH" | "FOUND_OTHER";
-    candidateId?: number;
-    candidateTxnAtJakarta?: string;
-    diffMinutes?: number;
-    note?: string;
-  };
+};
+
+type UploadState = {
+  file?: File | null;
+  sheet?: SheetData | null;
+  mapping?: DetectedMapping | null;
+  parsed?: ParsedRow[] | null;
+  error?: string | null;
+  mappingOk?: boolean;
 };
 
 function normHeader(s: string) {
-  return (s || "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
+  return (s || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 function pickHeader(headers: string[], synonyms: string[]): string | "" {
   const H = headers.map((h) => ({ h, n: normHeader(h) }));
   const syn = synonyms.map(normHeader);
+
+  // exact
   for (const s of syn) {
     const hit = H.find((x) => x.n === s);
     if (hit) return hit.h;
   }
-  // fallback: contains
+  // contains
   for (const s of syn) {
     const hit = H.find((x) => x.n.includes(s));
     if (hit) return hit.h;
@@ -109,42 +102,39 @@ function parseAmount(v: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function normalizeUsername(v: any) {
+  return String(v ?? "").trim().toLowerCase();
+}
+
 /**
- * Panel export biasanya pakai format: "YYYY-MM-DD HH:mm:ss" (tanpa timezone).
- * Kita anggap itu adalah waktu Asia/Jakarta, lalu convert ke UTC ms.
+ * STRICT sesuai request: Action harus persis "Approved" (case-insensitive).
+ */
+function isApprovedStrict(actionVal: any): boolean {
+  const s = String(actionVal ?? "").trim().toLowerCase();
+  return s === "approved";
+}
+
+/**
+ * Panel export: "YYYY-MM-DD HH:mm:ss" (tanpa timezone).
+ * Dianggap waktu Asia/Jakarta.
+ * Convert ke UTC ms: UTC = local - 7 jam.
  */
 function jakartaLocalStrToUtcMs(s: string): number | null {
   const m = String(s)
     .trim()
     .match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
   if (!m) return null;
+
   const year = Number(m[1]);
   const month = Number(m[2]);
   const day = Number(m[3]);
   const hour = Number(m[4]);
   const minute = Number(m[5]);
   const sec = Number(m[6]);
-  if (
-    !Number.isFinite(year) ||
-    !Number.isFinite(month) ||
-    !Number.isFinite(day) ||
-    !Number.isFinite(hour) ||
-    !Number.isFinite(minute) ||
-    !Number.isFinite(sec)
-  )
-    return null;
 
-  // Asia/Jakarta = UTC+7 → UTC = local - 7 hours
-  const utcMs = Date.UTC(year, month - 1, day, hour - 7, minute, sec, 0);
-  return Number.isFinite(utcMs) ? utcMs : null;
-}
+  if (![year, month, day, hour, minute, sec].every(Number.isFinite)) return null;
 
-function formatJakartaFromISO(iso: string): string {
-  // sv-SE gives "YYYY-MM-DD HH:mm:ss" (24h)
-  return new Date(iso).toLocaleString("sv-SE", {
-    timeZone: "Asia/Jakarta",
-    hour12: false,
-  });
+  return Date.UTC(year, month - 1, day, hour - 7, minute, sec, 0);
 }
 
 function formatJakartaFromUtcMs(ms: number): string {
@@ -154,23 +144,77 @@ function formatJakartaFromUtcMs(ms: number): string {
   });
 }
 
-function normalizeUsername(s: any) {
-  return String(s ?? "")
+function formatJakartaFromISO(iso: string): string {
+  return new Date(iso).toLocaleString("sv-SE", {
+    timeZone: "Asia/Jakarta",
+    hour12: false,
+  });
+}
+
+/**
+ * datetime-local input: "YYYY-MM-DDTHH:mm"
+ * Dianggap Asia/Jakarta.
+ */
+function jakartaLocalInputToUtcMs(value: string): number | null {
+  const m = String(value)
     .trim()
-    .toLowerCase();
+    .match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const hour = Number(m[4]);
+  const minute = Number(m[5]);
+  if (![year, month, day, hour, minute].every(Number.isFinite)) return null;
+
+  return Date.UTC(year, month - 1, day, hour - 7, minute, 0, 0);
 }
 
-function isApproved(actionVal: any): boolean {
-  const s = String(actionVal ?? "").trim().toLowerCase();
-  if (!s) return false;
-  // Rule utama user: Action = Approved. Kita bikin agak tolerant agar tidak fragile.
-  if (s === "approved") return true;
-  if (s.startsWith("approved")) return true;
-  if (s === "approve") return true;
-  if (s === "success") return true;
-  return false;
+function toDatetimeLocalJakartaNow(): string {
+  // buat default input (JKT) tanpa bergantung timezone OS
+  const nowJkt = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" }),
+  );
+  const y = nowJkt.getFullYear();
+  const m = String(nowJkt.getMonth() + 1).padStart(2, "0");
+  const d = String(nowJkt.getDate()).padStart(2, "0");
+  const hh = String(nowJkt.getHours()).padStart(2, "0");
+  const mm = String(nowJkt.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d}T${hh}:${mm}`;
 }
 
+function toDatetimeLocalJakartaStartOfDay(): string {
+  const nowJkt = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" }),
+  );
+  const y = nowJkt.getFullYear();
+  const m = String(nowJkt.getMonth() + 1).padStart(2, "0");
+  const d = String(nowJkt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}T00:00`;
+}
+
+async function readXlsx(file: File): Promise<SheetData> {
+  const ab = await file.arrayBuffer();
+  const wb = XLSX.read(ab, { type: "array" });
+  const sheetName = wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+
+  const headerRows = XLSX.utils.sheet_to_json(ws, {
+    header: 1,
+    raw: false,
+    defval: "",
+  }) as any[][];
+  const headers = (headerRows?.[0] ?? []).map((x) => String(x ?? "").trim());
+
+  const rows = XLSX.utils.sheet_to_json(ws, {
+    raw: false,
+    defval: "",
+  }) as Record<string, any>[];
+
+  return { headers, rows, sheetName };
+}
+
+// Synonyms internal (tanpa dropdown UI)
 const SYN_USERNAME = [
   "Login ID",
   "LoginID",
@@ -182,20 +226,8 @@ const SYN_USERNAME = [
   "Member ID",
   "MemberID",
 ];
-const SYN_AMOUNT = [
-  "Amount",
-  "Deposit Amount",
-  "Withdraw Amount",
-  "Gross Amount",
-  "Nominal",
-];
-const SYN_ACTION = [
-  "Action",
-  "Status",
-  "Approval",
-  "Approval Status",
-  "Result",
-];
+const SYN_AMOUNT = ["Amount", "Deposit Amount", "Withdraw Amount", "Gross Amount", "Nominal"];
+const SYN_ACTION = ["Action", "Status", "Approval", "Approval Status", "Result"];
 const SYN_APPROVE_AT = [
   "Approve Date",
   "ApproveDate",
@@ -205,110 +237,88 @@ const SYN_APPROVE_AT = [
   "Approved Time",
   "Approve At",
   "Approved At",
-  "Approve Datetime",
-  "ApproveDatetime",
-  "ApprovedDatetime",
 ];
 
-async function readXlsx(file: File): Promise<SheetData> {
-  const ab = await file.arrayBuffer();
-  const wb = XLSX.read(ab, { type: "array" });
-  const sheetName = wb.SheetNames[0];
-  const ws = wb.Sheets[sheetName];
-  const headerRows = XLSX.utils.sheet_to_json(ws, {
-    header: 1,
-    raw: false,
-    defval: "",
-  }) as any[][];
-  const headers = (headerRows?.[0] ?? []).map((x) => String(x ?? "").trim());
-  const rows = XLSX.utils.sheet_to_json(ws, {
-    raw: false,
-    defval: "",
-  }) as Record<string, any>[];
-  return { headers, rows, sheetName };
-}
-
-function buildDefaultMapping(headers: string[], _kind: Kind): ColumnMapping {
+function detectMapping(headers: string[]): DetectedMapping {
   const usernameCol = pickHeader(headers, SYN_USERNAME);
   const amountCol = pickHeader(headers, SYN_AMOUNT);
   const actionCol = pickHeader(headers, SYN_ACTION);
   const approveAtCol = pickHeader(headers, SYN_APPROVE_AT);
 
-  return {
-    usernameCol,
-    amountCol,
-    actionCol,
-    approveAtCol,
-  };
+  if (!usernameCol || !amountCol || !actionCol || !approveAtCol) {
+    const missing: string[] = [];
+    if (!usernameCol) missing.push("Login ID / User ID");
+    if (!amountCol) missing.push("Amount");
+    if (!actionCol) missing.push("Action");
+    if (!approveAtCol) missing.push("Approve Date");
+    throw new Error(`Kolom tidak ditemukan: ${missing.join(", ")}`);
+  }
+
+  return { usernameCol, amountCol, actionCol, approveAtCol };
 }
 
-function parseRows(sheet: SheetData, mapping: ColumnMapping): ParsedRow[] {
+function parseRows(sheet: SheetData, mapping: DetectedMapping): ParsedRow[] {
   const out: ParsedRow[] = [];
 
   for (let i = 0; i < (sheet.rows ?? []).length; i++) {
     const raw = sheet.rows[i] || {};
     const issues: string[] = [];
 
-    const usernameRaw = raw[mapping.usernameCol];
-    const username = normalizeUsername(usernameRaw);
+    const username = normalizeUsername(raw[mapping.usernameCol]);
     if (!username) issues.push("username kosong");
 
-    const amountRaw = raw[mapping.amountCol];
-    const amount = parseAmount(amountRaw);
+    const amount = parseAmount(raw[mapping.amountCol]);
     if (amount === null) issues.push("amount invalid");
 
-    const actionRaw = raw[mapping.actionCol];
-    const approved = isApproved(actionRaw);
+    const approved = isApprovedStrict(raw[mapping.actionCol]);
 
-    const approveAtRaw = raw[mapping.approveAtCol];
-    const approveAtUtcMs = jakartaLocalStrToUtcMs(String(approveAtRaw ?? ""));
+    const approveAtUtcMs = jakartaLocalStrToUtcMs(String(raw[mapping.approveAtCol] ?? ""));
     const approveAtJakarta =
       approveAtUtcMs != null ? formatJakartaFromUtcMs(approveAtUtcMs) : null;
     if (!approveAtJakarta) issues.push("approve date invalid");
 
     out.push({
       idx: i + 1,
-      usernameRaw,
       username,
-      amountRaw,
       amount,
-      actionRaw,
       approved,
-      approveAtRaw,
-      approveAtJakarta,
       approveAtUtcMs,
+      approveAtJakarta,
       issues,
       raw,
     });
   }
+
   return out;
 }
 
 async function fetchAllTxns(
   supabase: ReturnType<typeof supabaseBrowser>,
   kind: Kind,
-  minIso: string,
-  maxIso: string,
+  startIso: string,
+  endIso: string,
 ): Promise<SupaTxn[]> {
-  const table = kind;
   const pageSize = 1000;
   let from = 0;
   const all: SupaTxn[] = [];
 
   for (;;) {
     const to = from + pageSize - 1;
+
     const { data, error } = await supabase
-      .from(table)
+      .from(kind)
       .select("id, username, amount_gross, txn_at, status")
-      .gte("txn_at", minIso)
-      .lte("txn_at", maxIso)
       .eq("status", "posted")
+      .gte("txn_at", startIso)
+      .lte("txn_at", endIso)
       .order("txn_at", { ascending: false })
       .range(from, to);
 
     if (error) throw new Error(error.message);
+
     const rows = (data ?? []) as SupaTxn[];
     all.push(...rows);
+
     if (rows.length < pageSize) break;
     from += pageSize;
   }
@@ -316,124 +326,84 @@ async function fetchAllTxns(
   return all;
 }
 
-function buildIndexes(txns: SupaTxn[]) {
-  const byKey = new Map<string, SupaTxn[]>();
-  const byUserAmount = new Map<string, SupaTxn[]>();
-  const byUserTime = new Map<string, SupaTxn[]>();
-
-  for (const t of txns) {
-    const u = normalizeUsername(t.username);
-    const amt = Number(t.amount_gross || 0);
-    const jkt = formatJakartaFromISO(t.txn_at);
-    const k = `${u}|${amt}|${jkt}`;
-    const kua = `${u}|${amt}`;
-    const kut = `${u}|${jkt}`;
-
-    if (!byKey.has(k)) byKey.set(k, []);
-    byKey.get(k)!.push(t);
-
-    if (!byUserAmount.has(kua)) byUserAmount.set(kua, []);
-    byUserAmount.get(kua)!.push(t);
-
-    if (!byUserTime.has(kut)) byUserTime.set(kut, []);
-    byUserTime.get(kut)!.push(t);
-  }
-
-  return { byKey, byUserAmount, byUserTime };
+function normAmtKey(n: number) {
+  // biar 53000 == 53000.00
+  return Number(n).toFixed(2);
 }
 
-function matchRows(kind: Kind, parsed: ParsedRow[], txns: SupaTxn[]): MatchRow[] {
-  const { byKey, byUserAmount, byUserTime } = buildIndexes(txns);
+function buildSupaBucket(txns: SupaTxn[]) {
+  const map = new Map<string, SupaTxn[]>();
+  for (const t of txns) {
+    const u = normalizeUsername(t.username);
+    const a = normAmtKey(Number(t.amount_gross ?? 0));
+    const k = `${u}|${a}`;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k)!.push(t);
+  }
+  return map;
+}
 
-  // supaya bisa "pop" tanpa mempengaruhi sumber map, kita clone array.
-  const cloneMap = (m: Map<string, SupaTxn[]>) => {
-    const out = new Map<string, SupaTxn[]>();
-    for (const [k, v] of m.entries()) out.set(k, [...v]);
-    return out;
-  };
-  const keyMap = cloneMap(byKey);
+function matchWithinPeriod(kind: Kind, parsed: ParsedRow[], startUtcMs: number, endUtcMs: number, supaTxns: SupaTxn[]) {
+  const bucket = buildSupaBucket(supaTxns);
+  const bucketClone = new Map<string, SupaTxn[]>();
+  for (const [k, v] of bucket.entries()) bucketClone.set(k, [...v]);
 
-  const res: MatchRow[] = [];
+  const results: MatchRow[] = [];
 
   for (const r of parsed) {
     if (!r.approved) {
-      res.push({ kind, exportRow: r, status: "IGNORED_NOT_APPROVED" });
+      results.push({ kind, exportRow: r, status: "IGNORED" });
       continue;
     }
-    if (r.issues.length > 0 || r.amount == null || !r.approveAtJakarta) {
-      res.push({ kind, exportRow: r, status: "INVALID_ROW" });
+    if (r.issues.length > 0 || r.amount == null || r.approveAtUtcMs == null) {
+      results.push({ kind, exportRow: r, status: "INVALID" });
+      continue;
+    }
+    if (r.approveAtUtcMs < startUtcMs || r.approveAtUtcMs > endUtcMs) {
+      results.push({ kind, exportRow: r, status: "OUTSIDE_PERIOD" });
       continue;
     }
 
-    const u = r.username;
-    const amt = Number(r.amount);
-    const jkt = r.approveAtJakarta;
-    const k = `${u}|${amt}|${jkt}`;
-
-    const list = keyMap.get(k) ?? [];
+    const k = `${r.username}|${normAmtKey(r.amount)}`;
+    const list = bucketClone.get(k) ?? [];
     if (list.length > 0) {
       const matched = list.shift()!;
-      keyMap.set(k, list);
-      res.push({ kind, exportRow: r, status: "MATCHED", matched });
-      continue;
+      bucketClone.set(k, list);
+      results.push({ kind, exportRow: r, status: "MATCHED", matched });
+    } else {
+      results.push({ kind, exportRow: r, status: "MISSING_IN_BRACKET" });
     }
-
-    // Suggestions
-    const approveMs = r.approveAtUtcMs ?? null;
-    const uaKey = `${u}|${amt}`;
-    const uaList = byUserAmount.get(uaKey) ?? [];
-    if (uaList.length > 0 && approveMs != null) {
-      let best: { t: SupaTxn; diff: number } | null = null;
-      for (const t of uaList) {
-        const diff = Math.abs(approveMs - Date.parse(t.txn_at));
-        if (!best || diff < best.diff) best = { t, diff };
-      }
-      const diffMin = best ? Math.round(best.diff / 60000) : undefined;
-      res.push({
-        kind,
-        exportRow: r,
-        status: "NOT_FOUND",
-        suggestion: best
-          ? {
-              reason: "TIME_MISMATCH",
-              candidateId: best.t.id,
-              candidateTxnAtJakarta: formatJakartaFromISO(best.t.txn_at),
-              diffMinutes: diffMin,
-              note: "Username & amount sama, tapi approve date berbeda.",
-            }
-          : undefined,
-      });
-      continue;
-    }
-
-    const utKey = `${u}|${jkt}`;
-    const utList = byUserTime.get(utKey) ?? [];
-    if (utList.length > 0) {
-      let best: { t: SupaTxn; diff: number } | null = null;
-      for (const t of utList) {
-        const diff = Math.abs(Number(t.amount_gross || 0) - amt);
-        if (!best || diff < best.diff) best = { t, diff };
-      }
-      res.push({
-        kind,
-        exportRow: r,
-        status: "NOT_FOUND",
-        suggestion: best
-          ? {
-              reason: "AMOUNT_MISMATCH",
-              candidateId: best.t.id,
-              candidateTxnAtJakarta: formatJakartaFromISO(best.t.txn_at),
-              note: `Username & approve date sama, tapi amount beda (selisih ${formatAmount(best.diff)}).`,
-            }
-          : undefined,
-      });
-      continue;
-    }
-
-    res.push({ kind, exportRow: r, status: "NOT_FOUND" });
   }
 
-  return res;
+  // extras: supabase posted dalam periode tapi tidak kepakai buat match
+  const extras: SupaTxn[] = [];
+  for (const v of bucketClone.values()) extras.push(...v);
+
+  return { results, extras };
+}
+
+function Badge({
+  tone,
+  children,
+}: {
+  tone: "green" | "red" | "gray" | "amber" | "blue";
+  children: React.ReactNode;
+}) {
+  const cls =
+    tone === "green"
+      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      : tone === "red"
+        ? "bg-rose-50 text-rose-700 border-rose-200"
+        : tone === "amber"
+          ? "bg-amber-50 text-amber-800 border-amber-200"
+          : tone === "blue"
+            ? "bg-sky-50 text-sky-700 border-sky-200"
+            : "bg-gray-50 text-gray-700 border-gray-200";
+  return (
+    <span className={`inline-flex items-center rounded border px-2 py-0.5 text-xs ${cls}`}>
+      {children}
+    </span>
+  );
 }
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
@@ -445,378 +415,142 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
   );
 }
 
-function Badge({
-  children,
-  tone,
-}: {
-  children: React.ReactNode;
-  tone: "green" | "red" | "gray" | "amber";
-}) {
-  const cls =
-    tone === "green"
-      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-      : tone === "red"
-        ? "bg-rose-50 text-rose-700 border-rose-200"
-        : tone === "amber"
-          ? "bg-amber-50 text-amber-800 border-amber-200"
-          : "bg-gray-50 text-gray-700 border-gray-200";
-  return (
-    <span
-      className={`inline-flex items-center rounded border px-2 py-0.5 text-xs ${cls}`}
-    >
-      {children}
-    </span>
-  );
-}
-
-type UploadBlockState = {
-  file?: File | null;
-  sheet?: SheetData | null;
-  mapping?: ColumnMapping | null;
-  parsed?: ParsedRow[] | null;
-  error?: string | null;
-};
-
-function UploadBlock(props: {
-  kind: Kind;
+function UploadSimple(props: {
   title: string;
-  state: UploadBlockState;
-  setState: (fn: (prev: UploadBlockState) => UploadBlockState) => void;
+  kind: Kind;
+  state: UploadState;
+  setState: (fn: (prev: UploadState) => UploadState) => void;
 }) {
-  const { kind, title, state, setState } = props;
+  const { title, kind, state, setState } = props;
 
-  const headers = state.sheet?.headers ?? [];
-
-  const readyForParse =
-    !!state.sheet &&
-    !!state.mapping?.usernameCol &&
-    !!state.mapping?.amountCol &&
-    !!state.mapping?.actionCol &&
-    !!state.mapping?.approveAtCol;
-
-  useEffect(() => {
-    if (!state.sheet || !state.mapping) return;
-    try {
-      const parsed = parseRows(state.sheet, state.mapping);
-      setState((p) => ({ ...p, parsed, error: null }));
-    } catch (e: any) {
-      setState((p) => ({
-        ...p,
-        parsed: null,
-        error: e?.message || "Parse error",
-      }));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    state.sheet,
-    state.mapping?.usernameCol,
-    state.mapping?.amountCol,
-    state.mapping?.actionCol,
-    state.mapping?.approveAtCol,
-  ]);
-
-  const counts = useMemo(() => {
-    const list = state.parsed ?? [];
-    const approved = list.filter((r) => r.approved).length;
-    const invalid = list.filter((r) => r.approved && r.issues.length > 0).length;
-    return { total: list.length, approved, invalid };
+  const info = useMemo(() => {
+    const rows = state.parsed ?? [];
+    const approved = rows.filter((r) => r.approved).length;
+    return { total: rows.length, approved };
   }, [state.parsed]);
 
   return (
     <Card title={title}>
-      <div className="space-y-3">
-        <div className="flex flex-col gap-2">
-          <input
-            type="file"
-            accept=".xlsx,.xls"
-            className="text-sm"
-            onChange={async (e) => {
-              const f = e.target.files?.[0];
-              if (!f) return;
+      <div className="space-y-2">
+        <input
+          type="file"
+          accept=".xlsx,.xls"
+          className="text-sm"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+
+            setState((p) => ({
+              ...p,
+              file: f,
+              error: null,
+              sheet: null,
+              mapping: null,
+              parsed: null,
+              mappingOk: false,
+            }));
+
+            try {
+              const sheet = await readXlsx(f);
+              const mapping = detectMapping(sheet.headers);
+              const parsed = parseRows(sheet, mapping);
+
               setState((p) => ({
                 ...p,
-                file: f,
+                sheet,
+                mapping,
+                parsed,
+                mappingOk: true,
                 error: null,
-                sheet: null,
-                mapping: null,
-                parsed: null,
               }));
-              try {
-                const sheet = await readXlsx(f);
-                const mapping = buildDefaultMapping(sheet.headers, kind);
-                setState((p) => ({ ...p, sheet, mapping }));
-              } catch (err: any) {
-                setState((p) => ({
-                  ...p,
-                  error: err?.message || "Gagal baca file",
-                }));
-              }
-            }}
-          />
-          {state.sheet && (
-            <div className="text-xs text-gray-600">
-              Sheet: <span className="font-mono">{state.sheet.sheetName}</span>{" "}
-              • Rows: {counts.total}
-              {counts.approved > 0 ? ` • Approved: ${counts.approved}` : ""}
-              {counts.invalid > 0 ? ` • Invalid(approved): ${counts.invalid}` : ""}
-            </div>
-          )}
-          {state.error && <div className="text-sm text-rose-700">{state.error}</div>}
-        </div>
+            } catch (err: any) {
+              setState((p) => ({
+                ...p,
+                error: err?.message || "Gagal baca file",
+              }));
+            }
+          }}
+        />
 
         {state.sheet && (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                Column → Login ID / Username
-              </label>
-              <select
-                className="w-full rounded border px-2 py-2 text-sm"
-                value={state.mapping?.usernameCol ?? ""}
-                onChange={(e) =>
-                  setState((p) => ({
-                    ...p,
-                    mapping: {
-                      ...(p.mapping as ColumnMapping),
-                      usernameCol: e.target.value,
-                    },
-                  }))
-                }
-              >
-                <option value="">-- pilih kolom --</option>
-                {headers.map((h) => (
-                  <option key={h} value={h}>
-                    {h}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                Column → Amount
-              </label>
-              <select
-                className="w-full rounded border px-2 py-2 text-sm"
-                value={state.mapping?.amountCol ?? ""}
-                onChange={(e) =>
-                  setState((p) => ({
-                    ...p,
-                    mapping: {
-                      ...(p.mapping as ColumnMapping),
-                      amountCol: e.target.value,
-                    },
-                  }))
-                }
-              >
-                <option value="">-- pilih kolom --</option>
-                {headers.map((h) => (
-                  <option key={h} value={h}>
-                    {h}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                Column → Action / Status
-              </label>
-              <select
-                className="w-full rounded border px-2 py-2 text-sm"
-                value={state.mapping?.actionCol ?? ""}
-                onChange={(e) =>
-                  setState((p) => ({
-                    ...p,
-                    mapping: {
-                      ...(p.mapping as ColumnMapping),
-                      actionCol: e.target.value,
-                    },
-                  }))
-                }
-              >
-                <option value="">-- pilih kolom --</option>
-                {headers.map((h) => (
-                  <option key={h} value={h}>
-                    {h}
-                  </option>
-                ))}
-              </select>
-              <div className="text-[11px] text-gray-500 mt-1">
-                Rule: hanya baris dengan <span className="font-mono">Approved</span>{" "}
-                yang diproses.
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                Column → Approve Date
-              </label>
-              <select
-                className="w-full rounded border px-2 py-2 text-sm"
-                value={state.mapping?.approveAtCol ?? ""}
-                onChange={(e) =>
-                  setState((p) => ({
-                    ...p,
-                    mapping: {
-                      ...(p.mapping as ColumnMapping),
-                      approveAtCol: e.target.value,
-                    },
-                  }))
-                }
-              >
-                <option value="">-- pilih kolom --</option>
-                {headers.map((h) => (
-                  <option key={h} value={h}>
-                    {h}
-                  </option>
-                ))}
-              </select>
-              <div className="text-[11px] text-gray-500 mt-1">
-                Approve Date dianggap waktu <b>Asia/Jakarta</b>, lalu dicocokkan
-                ke <span className="font-mono">txn_at</span> (posted).
-              </div>
-            </div>
+          <div className="text-xs text-gray-600">
+            Sheet: <span className="font-mono">{state.sheet.sheetName}</span> • Rows:{" "}
+            {info.total} • Approved: {info.approved} •{" "}
+            {state.mappingOk ? <Badge tone="green">Mapping OK</Badge> : <Badge tone="amber">Mapping error</Badge>}
           </div>
         )}
 
-        {state.parsed && state.parsed.length > 0 && (
-          <div className="rounded border">
-            <div className="px-3 py-2 text-xs text-gray-600 bg-gray-50 border-b flex items-center justify-between">
-              <span>Preview (max 5 rows)</span>
-              {readyForParse ? (
-                <Badge tone="green">Mapping OK</Badge>
-              ) : (
-                <Badge tone="amber">Mapping belum lengkap</Badge>
-              )}
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs text-gray-600">
-                    <th className="text-left px-3 py-2">#</th>
-                    <th className="text-left px-3 py-2">username</th>
-                    <th className="text-right px-3 py-2">amount</th>
-                    <th className="text-left px-3 py-2">approve(jkt)</th>
-                    <th className="text-left px-3 py-2">action</th>
-                    <th className="text-left px-3 py-2">issues</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {state.parsed.slice(0, 5).map((r) => (
-                    <tr key={r.idx} className="border-t">
-                      <td className="px-3 py-2 text-gray-500">{r.idx}</td>
-                      <td className="px-3 py-2 font-mono">{r.username}</td>
-                      <td className="px-3 py-2 text-right font-mono">
-                        {r.amount == null ? "-" : formatAmount(r.amount)}
-                      </td>
-                      <td className="px-3 py-2 font-mono">
-                        {r.approveAtJakarta ?? "-"}
-                      </td>
-                      <td className="px-3 py-2">{String(r.actionRaw ?? "")}</td>
-                      <td className="px-3 py-2 text-xs text-gray-600">
-                        {r.issues.join(", ")}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        {state.mappingOk && state.mapping && (
+          <div className="text-[11px] text-gray-500">
+            Detected: <span className="font-mono">{state.mapping.usernameCol}</span>,{" "}
+            <span className="font-mono">{state.mapping.amountCol}</span>,{" "}
+            <span className="font-mono">{state.mapping.actionCol}</span>,{" "}
+            <span className="font-mono">{state.mapping.approveAtCol}</span>
           </div>
         )}
+
+        {state.error && <div className="text-sm text-rose-700">{state.error}</div>}
       </div>
     </Card>
   );
 }
 
-function ResultsTable({ title, rows }: { title: string; rows: MatchRow[] }) {
-  const [view, setView] = useState<
-    "ALL" | "UNMATCHED" | "MATCHED" | "IGNORED" | "INVALID"
-  >("ALL");
-
-  // Search: confirm-to-apply (Enter/Submit)
-  const [qInput, setQInput] = useState("");
-  const [qApplied, setQApplied] = useState("");
-  const applySearch = () => setQApplied(qInput.trim().toLowerCase());
-
-  const filtered = useMemo(() => {
-    let list = rows;
-    if (view === "UNMATCHED") list = list.filter((r) => r.status === "NOT_FOUND");
-    if (view === "MATCHED") list = list.filter((r) => r.status === "MATCHED");
-    if (view === "IGNORED")
-      list = list.filter((r) => r.status === "IGNORED_NOT_APPROVED");
-    if (view === "INVALID") list = list.filter((r) => r.status === "INVALID_ROW");
-    if (qApplied)
-      list = list.filter((r) => (r.exportRow.username || "").includes(qApplied));
-    return list;
-  }, [rows, view, qApplied]);
+function ResultsTable({
+  title,
+  rows,
+  extras,
+}: {
+  title: string;
+  rows: MatchRow[];
+  extras: SupaTxn[];
+}) {
+  const [view, setView] = useState<"MISSING" | "MATCHED" | "ALL">("MISSING");
 
   const summary = useMemo(() => {
-    const total = rows.length;
+    const totalApproved = rows.filter((r) => r.exportRow.approved).length;
+    const inPeriod = rows.filter(
+      (r) => r.exportRow.approved && r.status !== "OUTSIDE_PERIOD" && r.status !== "INVALID",
+    ).length;
+    const missing = rows.filter((r) => r.status === "MISSING_IN_BRACKET").length;
     const matched = rows.filter((r) => r.status === "MATCHED").length;
-    const notFound = rows.filter((r) => r.status === "NOT_FOUND").length;
-    const ignored = rows.filter((r) => r.status === "IGNORED_NOT_APPROVED").length;
-    const invalid = rows.filter((r) => r.status === "INVALID_ROW").length;
-    return { total, matched, notFound, ignored, invalid };
-  }, [rows]);
+    const ignored = rows.filter((r) => r.status === "IGNORED").length;
+    const outside = rows.filter((r) => r.status === "OUTSIDE_PERIOD").length;
+    const invalid = rows.filter((r) => r.status === "INVALID").length;
+
+    return { totalApproved, inPeriod, missing, matched, ignored, outside, invalid, extras: extras.length };
+  }, [rows, extras]);
+
+  const filtered = useMemo(() => {
+    if (view === "MISSING") return rows.filter((r) => r.status === "MISSING_IN_BRACKET");
+    if (view === "MATCHED") return rows.filter((r) => r.status === "MATCHED");
+    return rows;
+  }, [rows, view]);
 
   return (
     <Card title={title}>
-      <div className="flex flex-col gap-3">
+      <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <Badge tone="gray">Total: {summary.total}</Badge>
+          <Badge tone="blue">Approved: {summary.totalApproved}</Badge>
+          <Badge tone="gray">In period: {summary.inPeriod}</Badge>
+          <Badge tone="red">Missing: {summary.missing}</Badge>
           <Badge tone="green">Matched: {summary.matched}</Badge>
-          <Badge tone="red">Not found: {summary.notFound}</Badge>
           <Badge tone="gray">Ignored: {summary.ignored}</Badge>
+          <Badge tone="amber">Outside: {summary.outside}</Badge>
           <Badge tone="amber">Invalid: {summary.invalid}</Badge>
+          <Badge tone="gray">Extra bracket: {summary.extras}</Badge>
         </div>
 
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-600">View</label>
-            <select
-              className="rounded border px-2 py-2 text-sm"
-              value={view}
-              onChange={(e) => setView(e.target.value as any)}
-            >
-              <option value="ALL">All</option>
-              <option value="UNMATCHED">Unmatched</option>
-              <option value="MATCHED">Matched</option>
-              <option value="IGNORED">Ignored</option>
-              <option value="INVALID">Invalid</option>
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <input
-              className="rounded border px-3 py-2 text-sm w-[220px]"
-              placeholder="Search username…"
-              value={qInput}
-              onChange={(e) => setQInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") applySearch();
-              }}
-            />
-            <button
-              type="button"
-              onClick={applySearch}
-              className="rounded border px-3 py-2 text-sm hover:bg-gray-50"
-            >
-              Submit
-            </button>
-            {qApplied && (
-              <button
-                type="button"
-                onClick={() => {
-                  setQInput("");
-                  setQApplied("");
-                }}
-                className="rounded border px-3 py-2 text-sm hover:bg-gray-50"
-              >
-                Clear
-              </button>
-            )}
-          </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-600">View</label>
+          <select
+            className="rounded border px-2 py-2 text-sm"
+            value={view}
+            onChange={(e) => setView(e.target.value as any)}
+          >
+            <option value="MISSING">Missing only</option>
+            <option value="MATCHED">Matched only</option>
+            <option value="ALL">All (debug)</option>
+          </select>
         </div>
 
         <div className="overflow-x-auto rounded border">
@@ -828,73 +562,49 @@ function ResultsTable({ title, rows }: { title: string; rows: MatchRow[] }) {
                 <th className="text-right">Amount</th>
                 <th className="text-left">Approve Date (JKT)</th>
                 <th className="text-left">Status</th>
-                <th className="text-left">Matched ID</th>
-                <th className="text-left">Supabase txn_at (JKT)</th>
-                <th className="text-left">Suggestion</th>
+                <th className="text-left">Bracket ID</th>
+                <th className="text-left">Bracket txn_at (JKT)</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r, i) => {
+              {filtered.map((r) => {
                 const tone =
                   r.status === "MATCHED"
                     ? "green"
-                    : r.status === "NOT_FOUND"
+                    : r.status === "MISSING_IN_BRACKET"
                       ? "red"
-                      : r.status === "INVALID_ROW"
-                        ? "amber"
-                        : "gray";
+                      : r.status === "IGNORED"
+                        ? "gray"
+                        : r.status === "OUTSIDE_PERIOD"
+                          ? "amber"
+                          : "amber";
+
                 return (
-                  <tr key={`${r.kind}-${r.exportRow.idx}-${i}`}>
+                  <tr key={`${r.kind}-${r.exportRow.idx}`}>
                     <td className="mono">{r.exportRow.idx}</td>
                     <td className="mono">{r.exportRow.username}</td>
                     <td className="t-right mono">
-                      {r.exportRow.amount == null
-                        ? "-"
-                        : formatAmount(r.exportRow.amount)}
+                      {r.exportRow.amount == null ? "-" : formatAmount(r.exportRow.amount)}
                     </td>
                     <td className="mono">{r.exportRow.approveAtJakarta ?? "-"}</td>
                     <td>
                       <Badge tone={tone as any}>{r.status}</Badge>
+                      {r.status === "INVALID" && r.exportRow.issues.length > 0 && (
+                        <div className="text-[11px] text-amber-800 mt-1">
+                          {r.exportRow.issues.join(", ")}
+                        </div>
+                      )}
                     </td>
                     <td className="mono">{r.matched?.id ?? "-"}</td>
                     <td className="mono">
                       {r.matched ? formatJakartaFromISO(r.matched.txn_at) : "-"}
-                    </td>
-                    <td className="text-xs text-gray-700">
-                      {r.suggestion ? (
-                        <div className="space-y-0.5">
-                          <div className="font-mono">
-                            {r.suggestion.reason}
-                            {r.suggestion.candidateId
-                              ? ` → #${r.suggestion.candidateId}`
-                              : ""}
-                          </div>
-                          {r.suggestion.candidateTxnAtJakarta && (
-                            <div className="font-mono">
-                              txn_at: {r.suggestion.candidateTxnAtJakarta}
-                            </div>
-                          )}
-                          {typeof r.suggestion.diffMinutes === "number" && (
-                            <div>Δ {r.suggestion.diffMinutes} menit</div>
-                          )}
-                          {r.suggestion.note && <div>{r.suggestion.note}</div>}
-                        </div>
-                      ) : (
-                        ""
-                      )}
-                      {r.status === "INVALID_ROW" &&
-                        r.exportRow.issues.length > 0 && (
-                          <div className="text-amber-800">
-                            {r.exportRow.issues.join(", ")}
-                          </div>
-                        )}
                     </td>
                   </tr>
                 );
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="text-center text-sm text-gray-500 py-6">
+                  <td colSpan={7} className="text-center text-sm text-gray-500 py-6">
                     No data
                   </td>
                 </tr>
@@ -902,6 +612,37 @@ function ResultsTable({ title, rows }: { title: string; rows: MatchRow[] }) {
             </tbody>
           </table>
         </div>
+
+        {/* Optional: transaksi bracket yang "extra" dalam periode */}
+        {extras.length > 0 && (
+          <details className="rounded border p-3">
+            <summary className="cursor-pointer text-sm font-medium">
+              Extra in Bracket (posted dalam periode tapi tidak match ke panel)
+            </summary>
+            <div className="mt-3 overflow-x-auto rounded border">
+              <table className="table-grid">
+                <thead>
+                  <tr>
+                    <th className="text-left">ID</th>
+                    <th className="text-left">Username</th>
+                    <th className="text-right">Amount</th>
+                    <th className="text-left">txn_at (JKT)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {extras.map((t) => (
+                    <tr key={t.id}>
+                      <td className="mono">{t.id}</td>
+                      <td className="mono">{normalizeUsername(t.username)}</td>
+                      <td className="t-right mono">{formatAmount(Number(t.amount_gross ?? 0))}</td>
+                      <td className="mono">{formatJakartaFromISO(t.txn_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        )}
       </div>
     </Card>
   );
@@ -910,7 +651,7 @@ function ResultsTable({ title, rows }: { title: string; rows: MatchRow[] }) {
 export default function ImportDataPanel() {
   const supabase = supabaseBrowser();
 
-  // Guard roles
+  // Guard role (sesuai kebutuhan)
   const [authorized, setAuthorized] = useState<"loading" | "ok" | "no">("loading");
   const [role, setRole] = useState<AnyRole>("other");
 
@@ -923,18 +664,21 @@ export default function ImportDataPanel() {
         setAuthorized("no");
         return;
       }
+
       const { data: prof, error } = await supabase
         .from("profiles")
         .select("role")
         .eq("user_id", user.id)
         .single();
+
       if (error) {
-        console.error("load role (import panel) error:", error);
         setAuthorized("no");
         return;
       }
+
       const r = normalizeRole((prof as any)?.role);
       setRole(r);
+
       const allowed = new Set<AnyRole>(["admin", "operator", "cs", "cs_dp", "cs_wd"]);
       setAuthorized(allowed.has(r) ? "ok" : "no");
     })();
@@ -943,29 +687,25 @@ export default function ImportDataPanel() {
 
   const [mode, setMode] = useState<ImportMode>("deposits");
 
-  const [depState, setDepState] = useState<UploadBlockState>({});
-  const [wdState, setWdState] = useState<UploadBlockState>({});
+  // Period input (JKT)
+  const [startLocal, setStartLocal] = useState<string>(toDatetimeLocalJakartaStartOfDay());
+  const [endLocal, setEndLocal] = useState<string>(toDatetimeLocalJakartaNow());
+
+  const [depState, setDepState] = useState<UploadState>({});
+  const [wdState, setWdState] = useState<UploadState>({});
 
   const [running, setRunning] = useState(false);
-  const [depResults, setDepResults] = useState<MatchRow[] | null>(null);
-  const [wdResults, setWdResults] = useState<MatchRow[] | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+
+  const [depRows, setDepRows] = useState<MatchRow[] | null>(null);
+  const [wdRows, setWdRows] = useState<MatchRow[] | null>(null);
+  const [depExtras, setDepExtras] = useState<SupaTxn[]>([]);
+  const [wdExtras, setWdExtras] = useState<SupaTxn[]>([]);
 
   const lastRunRef = useRef(0);
 
-  const canRunDeposits =
-    !!depState.parsed &&
-    !!depState.mapping?.usernameCol &&
-    !!depState.mapping?.amountCol &&
-    !!depState.mapping?.actionCol &&
-    !!depState.mapping?.approveAtCol;
-
-  const canRunWithdrawals =
-    !!wdState.parsed &&
-    !!wdState.mapping?.usernameCol &&
-    !!wdState.mapping?.amountCol &&
-    !!wdState.mapping?.actionCol &&
-    !!wdState.mapping?.approveAtCol;
+  const canRunDeposits = !!depState.mappingOk && !!depState.parsed;
+  const canRunWithdrawals = !!wdState.mappingOk && !!wdState.parsed;
 
   const canRun =
     mode === "deposits"
@@ -976,56 +716,59 @@ export default function ImportDataPanel() {
 
   async function runMatch() {
     if (!canRun) return;
+
+    const startUtcMs = jakartaLocalInputToUtcMs(startLocal);
+    const endUtcMs = jakartaLocalInputToUtcMs(endLocal);
+
+    if (startUtcMs == null || endUtcMs == null) {
+      setRunError("Start/End period tidak valid.");
+      return;
+    }
+    if (endUtcMs < startUtcMs) {
+      setRunError("End period harus lebih besar dari Start period.");
+      return;
+    }
+
     setRunning(true);
     setRunError(null);
+
     const runId = Date.now();
     lastRunRef.current = runId;
 
     try {
-      // Deposits
+      const startIso = new Date(startUtcMs).toISOString();
+      // inclusive end: tambah 59 detik supaya periode menit terakhir kebawa
+      const endIso = new Date(endUtcMs + 59_000).toISOString();
+
       if (mode === "deposits" || mode === "both") {
         const parsed = depState.parsed ?? [];
-        const approved = parsed.filter((r) => r.approved && r.approveAtUtcMs != null);
-        if (approved.length === 0) {
-          const rows = matchRows("deposits", parsed, []);
-          if (lastRunRef.current === runId) setDepResults(rows);
-        } else {
-          const minMs = Math.min(...approved.map((r) => r.approveAtUtcMs as number));
-          const maxMs = Math.max(...approved.map((r) => r.approveAtUtcMs as number));
-          const minIso = new Date(minMs - 5 * 60000).toISOString();
-          const maxIso = new Date(maxMs + 5 * 60000).toISOString();
+        const supa = await fetchAllTxns(supabase, "deposits", startIso, endIso);
+        const { results, extras } = matchWithinPeriod("deposits", parsed, startUtcMs, endUtcMs + 59_000, supa);
 
-          const txns = await fetchAllTxns(supabase, "deposits", minIso, maxIso);
-          const rows = matchRows("deposits", parsed, txns);
-          if (lastRunRef.current === runId) setDepResults(rows);
+        if (lastRunRef.current === runId) {
+          setDepRows(results);
+          setDepExtras(extras);
         }
       } else {
-        setDepResults(null);
+        setDepRows(null);
+        setDepExtras([]);
       }
 
-      // Withdrawals
       if (mode === "withdrawals" || mode === "both") {
         const parsed = wdState.parsed ?? [];
-        const approved = parsed.filter((r) => r.approved && r.approveAtUtcMs != null);
-        if (approved.length === 0) {
-          const rows = matchRows("withdrawals", parsed, []);
-          if (lastRunRef.current === runId) setWdResults(rows);
-        } else {
-          const minMs = Math.min(...approved.map((r) => r.approveAtUtcMs as number));
-          const maxMs = Math.max(...approved.map((r) => r.approveAtUtcMs as number));
-          const minIso = new Date(minMs - 5 * 60000).toISOString();
-          const maxIso = new Date(maxMs + 5 * 60000).toISOString();
+        const supa = await fetchAllTxns(supabase, "withdrawals", startIso, endIso);
+        const { results, extras } = matchWithinPeriod("withdrawals", parsed, startUtcMs, endUtcMs + 59_000, supa);
 
-          const txns = await fetchAllTxns(supabase, "withdrawals", minIso, maxIso);
-          const rows = matchRows("withdrawals", parsed, txns);
-          if (lastRunRef.current === runId) setWdResults(rows);
+        if (lastRunRef.current === runId) {
+          setWdRows(results);
+          setWdExtras(extras);
         }
       } else {
-        setWdResults(null);
+        setWdRows(null);
+        setWdExtras([]);
       }
     } catch (e: any) {
-      console.error(e);
-      setRunError(e?.message || "Gagal menjalankan match");
+      setRunError(e?.message || "Gagal run match");
     } finally {
       setRunning(false);
     }
@@ -1047,83 +790,114 @@ export default function ImportDataPanel() {
   return (
     <div className="space-y-4">
       <Card title="Setup">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-gray-600">Import type</label>
-            <select
-              className="rounded border px-3 py-2 text-sm w-[240px]"
-              value={mode}
-              onChange={(e) => {
-                const v = e.target.value as ImportMode;
-                setMode(v);
-                setDepResults(null);
-                setWdResults(null);
-                setRunError(null);
-              }}
-            >
-              <option value="deposits">Deposits</option>
-              <option value="withdrawals">Withdrawals</option>
-              <option value="both">Deposit + Withdraw</option>
-            </select>
-            <div className="text-[11px] text-gray-500">
-              Matching rules: username ↔ <span className="font-mono">username</span>, amount ↔{" "}
-              <span className="font-mono">amount_gross</span>, hanya{" "}
-              <span className="font-mono">Approved</span> dan{" "}
-              <span className="font-mono">status=posted</span>, approve date (JKT) ↔{" "}
-              <span className="font-mono">txn_at</span>.
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-600">Import type</label>
+              <select
+                className="rounded border px-3 py-2 text-sm w-[260px]"
+                value={mode}
+                onChange={(e) => {
+                  setMode(e.target.value as ImportMode);
+                  setDepRows(null);
+                  setWdRows(null);
+                  setDepExtras([]);
+                  setWdExtras([]);
+                  setRunError(null);
+                }}
+              >
+                <option value="deposits">Deposits</option>
+                <option value="withdrawals">Withdrawals</option>
+                <option value="both">Deposit + Withdraw</option>
+              </select>
+              <div className="text-[11px] text-gray-500">
+                Matching = <b>periode</b> (Approve Date panel & txn_at bracket harus sama-sama di range) + key{" "}
+                <span className="font-mono">username + amount_gross</span>. Action harus persis{" "}
+                <span className="font-mono">Approved</span>, status bracket harus{" "}
+                <span className="font-mono">posted</span>.
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                onClick={runMatch}
+                disabled={!canRun || running}
+              >
+                {running ? "Running…" : "Run Match"}
+              </button>
+
+              <button
+                type="button"
+                className="rounded border px-4 py-2 text-sm hover:bg-gray-50"
+                onClick={() => {
+                  setDepRows(null);
+                  setWdRows(null);
+                  setDepExtras([]);
+                  setWdExtras([]);
+                  setRunError(null);
+                }}
+                disabled={running}
+              >
+                Clear
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
-              onClick={runMatch}
-              disabled={!canRun || running}
-            >
-              {running ? "Running…" : "Run Match"}
-            </button>
-            <button
-              type="button"
-              className="rounded border px-4 py-2 text-sm hover:bg-gray-50"
-              onClick={() => {
-                setDepResults(null);
-                setWdResults(null);
-                setRunError(null);
-              }}
-              disabled={running}
-            >
-              Clear Results
-            </button>
+          {/* Period inputs (JKT) */}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Start (Asia/Jakarta)</label>
+              <input
+                type="datetime-local"
+                className="w-full rounded border px-3 py-2 text-sm"
+                value={startLocal}
+                onChange={(e) => setStartLocal(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">End (Asia/Jakarta)</label>
+              <input
+                type="datetime-local"
+                className="w-full rounded border px-3 py-2 text-sm"
+                value={endLocal}
+                onChange={(e) => setEndLocal(e.target.value)}
+              />
+            </div>
+            <div className="text-[11px] text-gray-500 md:pt-6">
+              Tip: ini dipakai untuk “request import jam sekian–sekian” agar ketahuan transaksi panel mana yang belum tercatat.
+            </div>
           </div>
+
+          {runError && <div className="text-sm text-rose-700">{runError}</div>}
         </div>
-        {runError && <div className="mt-3 text-sm text-rose-700">{runError}</div>}
       </Card>
 
       {(mode === "deposits" || mode === "both") && (
-        <UploadBlock
-          kind="deposits"
+        <UploadSimple
           title="Upload Export Deposits"
+          kind="deposits"
           state={depState}
           setState={(fn) => setDepState((p) => fn(p))}
         />
       )}
 
       {(mode === "withdrawals" || mode === "both") && (
-        <UploadBlock
-          kind="withdrawals"
+        <UploadSimple
           title="Upload Export Withdrawals"
+          kind="withdrawals"
           state={wdState}
           setState={(fn) => setWdState((p) => fn(p))}
         />
       )}
 
-      {(mode === "deposits" || mode === "both") && depResults && (
-        <ResultsTable title="Results: Deposits" rows={depResults} />
+      {(mode === "deposits" || mode === "both") && depRows && (
+        <ResultsTable title="Results: Deposits" rows={depRows} extras={depExtras} />
       )}
 
-      {(mode === "withdrawals" || mode === "both") && wdResults && (
-        <ResultsTable title="Results: Withdrawals" rows={wdResults} />
+      {(mode === "withdrawals" || mode === "both") && wdRows && (
+        <ResultsTable title="Results: Withdrawals" rows={wdRows} extras={wdExtras} />
       )}
     </div>
   );
