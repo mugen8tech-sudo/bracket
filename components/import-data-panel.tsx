@@ -63,7 +63,7 @@ type UploadState = {
   mappingOk?: boolean;
 };
 
-type AggStatus = "MATCHED" | "MISSING_IN_BRACKET" | "EXTRA_IN_BRACKET";
+type AggStatus = "MATCHED" | "LEBIH_BRACKET" | "LEBIH_PANEL";
 
 type AggRow = {
   kind: Kind;
@@ -380,10 +380,10 @@ function matchAgg(kind: Kind, parsed: ParsedRow[], startUtcMs: number, endUtcMs:
     const p = panel.map.get(username) ?? { count: 0, sumCents: 0 };
     const b = bracketMap.get(username) ?? { count: 0, sumCents: 0 };
 
-    const diff = p.sumCents - b.sumCents;
+    const diff = b.sumCents - p.sumCents; // bracket - panel
     let status: AggStatus = "MATCHED";
-    if (diff > 0) status = "MISSING_IN_BRACKET";
-    else if (diff < 0) status = "EXTRA_IN_BRACKET";
+    if (diff > 0) status = "LEBIH_BRACKET";
+    else if (diff < 0) status = "LEBIH_PANEL";
 
     rows.push({
       kind,
@@ -536,18 +536,16 @@ function ResultsAggTable({
     bracketPostedTotal: number;
   };
 }) {
-  const [view, setView] = useState<"MISSING" | "EXTRA" | "MATCHED" | "ALL">("MISSING");
+  const [view, setView] = useState<"MISSING" | "MATCHED" | "ALL">("MISSING");
 
   const summary = useMemo(() => {
     const matched = rows.filter((r) => r.status === "MATCHED").length;
-    const missing = rows.filter((r) => r.status === "MISSING_IN_BRACKET").length;
-    const extra = rows.filter((r) => r.status === "EXTRA_IN_BRACKET").length;
-    return { users: rows.length, matched, missing, extra };
+    const missing = rows.filter((r) => r.status !== "MATCHED").length; // gabungan lebih bracket + lebih panel
+    return { users: rows.length, matched, missing };
   }, [rows]);
 
   const filtered = useMemo(() => {
-    if (view === "MISSING") return rows.filter((r) => r.status === "MISSING_IN_BRACKET");
-    if (view === "EXTRA") return rows.filter((r) => r.status === "EXTRA_IN_BRACKET");
+    if (view === "MISSING") return rows.filter((r) => r.status !== "MATCHED");
     if (view === "MATCHED") return rows.filter((r) => r.status === "MATCHED");
     return rows;
   }, [rows, view]);
@@ -559,7 +557,6 @@ function ResultsAggTable({
           <Badge tone="blue">Users: {summary.users}</Badge>
           <Badge tone="green">Matched: {summary.matched}</Badge>
           <Badge tone="red">Missing: {summary.missing}</Badge>
-          <Badge tone="amber">Extra: {summary.extra}</Badge>
           <Badge tone="gray">Panel approved rows: {meta.panelApprovedTotal}</Badge>
           <Badge tone="gray">Bracket posted rows: {meta.bracketPostedTotal}</Badge>
         </div>
@@ -577,7 +574,6 @@ function ResultsAggTable({
             onChange={(e) => setView(e.target.value as any)}
           >
             <option value="MISSING">Missing only</option>
-            <option value="EXTRA">Extra only</option>
             <option value="MATCHED">Matched only</option>
             <option value="ALL">All (debug)</option>
           </select>
@@ -601,7 +597,7 @@ function ResultsAggTable({
                 const tone =
                   r.status === "MATCHED"
                     ? "green"
-                    : r.status === "MISSING_IN_BRACKET"
+                    : r.status === "LEBIH_PANEL"
                       ? "red"
                       : "amber";
 
@@ -616,11 +612,11 @@ function ResultsAggTable({
                       {r.diffCents === 0
                         ? formatAmount(0)
                         : r.diffCents > 0
-                          ? `-${formatAmount(diffAbs / 100)}`
-                          : `+${formatAmount(diffAbs / 100)}`}
+                          ? `+${formatAmount(r.diffCents / 100)}`
+                          : `${formatAmount(r.diffCents / 100)}`}
                     </td>
                     <td>
-                      <Badge tone={tone as any}>{r.status}</Badge>
+                      <Badge tone={tone as any}>{r.status.split("_").join(" ")}</Badge>
                     </td>
                     <td className="t-right mono">{r.panelCount}</td>
                     <td className="t-right mono">{r.bracketCount}</td>
