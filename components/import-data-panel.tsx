@@ -584,12 +584,12 @@ function ResultsAggTable({
             <thead>
               <tr>
                 <th className="text-left">Username</th>
-                <th className="text-right">Panel Total</th>
-                <th className="text-right">Bracket Total</th>
-                <th className="text-right">Diff</th>
+                <th className="text-left">Panel Total</th>
+                <th className="text-left">Bracket Total</th>
+                <th className="text-left">Diff</th>
                 <th className="text-left">Status</th>
-                <th className="text-right">Panel Cnt</th>
-                <th className="text-right">Bracket Cnt</th>
+                <th className="text-left">Panel Cnt</th>
+                <th className="text-left">Bracket Cnt</th>
               </tr>
             </thead>
             <tbody>
