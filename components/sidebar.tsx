@@ -88,6 +88,12 @@ export default function Sidebar() {
     { label: "Banks", href: "/banks", enabled: true },
     { label: "Deposits", href: "/deposits", enabled: true },
     { label: "Withdrawals", href: "/withdrawals", enabled: true },
+    {
+      label: "Import Data Panel",
+      href: "/import_data_panel",
+      enabled: true,
+      roles: ["admin", "operator", "cs", "cs_dp", "cs_wd"],
+    },
     { label: "Pending Deposits", href: "/pending_deposits", enabled: true },
     { label: "Interbank Transfer", href: "/interbank_transfers", enabled: true },
 
