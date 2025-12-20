@@ -97,9 +97,9 @@ export default async function ImportRunDetailPage({ params }: { params: { id: st
             </tr>
 
             <tr>
-              <td>Requested at (JKT)</td>
+              <td>Requested at</td>
               <td>{fmtJakarta(run.requested_at)}</td>
-              <td>Period (JKT)</td>
+              <td>Period</td>
               <td>
                 {fmtJakarta(run.period_start_at)} - {fmtJakarta(run.period_end_at)}
               </td>
@@ -128,7 +128,7 @@ export default async function ImportRunDetailPage({ params }: { params: { id: st
       {allApprovedOutsidePeriod && (
         <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           Semua transaksi <b>Approved</b> di file berada di <b>luar periode</b> yang kamu pilih.
-          Cek ulang <b>Start/End (JKT)</b> atau pastikan file export-nya benar.
+          Cek ulang <b>Start/End</b> atau pastikan file export-nya benar.
           <div className="mt-1 text-xs">
             Outside: <b>{approvedOutside}</b> / Total Approved: <b>{approvedTotal}</b>
           </div>
