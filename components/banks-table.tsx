@@ -872,69 +872,73 @@ export default function BanksTable() {
   /* ================== RENDER ================== */
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-end gap-2">
-        {/* Setting Potongan -> hanya admin */}
-        <button
-          type="button"
-          onClick={() => {
-            if (!canSettingPotongan || roleLoading) {
-              if (!roleLoading && !canSettingPotongan) {
-                alert("Unauthorized");
-              }
-              return;
-            }
-            setShowSetting(true);
-          }}
-          disabled={roleLoading || !canSettingPotongan}
-          aria-disabled={roleLoading || !canSettingPotongan}
-          className={`rounded px-4 py-2 ${
-            roleLoading || !canSettingPotongan
-              ? "bg-gray-100 opacity-50 cursor-not-allowed"
-              : "bg-gray-100"
-          }`}
-          title={
-            roleLoading
-              ? "Memuat role…"
-              : !canSettingPotongan
-              ? "Unauthorized"
-              : "Pengaturan dampak potongan langsung ke credit tenant"
-          }
-        >
-          Setting Potongan → Credit
-        </button>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-lg font-semibold">Banks</h1>
 
-        {/* New Record -> admin & operator */}
-        <button
-          type="button"
-          onClick={() => {
-            if (!canNewBank || roleLoading) {
-              if (!roleLoading && !canNewBank) {
-                alert("Unauthorized");
+        <div className="flex items-center justify-end gap-2">
+          {/* Setting Potongan -> hanya admin */}
+          <button
+            type="button"
+            onClick={() => {
+              if (!canSettingPotongan || roleLoading) {
+                if (!roleLoading && !canSettingPotongan) {
+                  alert("Unauthorized");
+                }
+                return;
               }
-              return;
+              setShowSetting(true);
+            }}
+            disabled={roleLoading || !canSettingPotongan}
+            aria-disabled={roleLoading || !canSettingPotongan}
+            className={`rounded px-4 py-2 ${
+              roleLoading || !canSettingPotongan
+                ? "bg-gray-100 opacity-50 cursor-not-allowed"
+                : "bg-gray-100"
+            }`}
+            title={
+              roleLoading
+                ? "Memuat role…"
+                : !canSettingPotongan
+                ? "Unauthorized"
+                : "Pengaturan dampak potongan langsung ke credit tenant"
             }
-            const evt = new CustomEvent("open-bank-new");
-            document.dispatchEvent(evt);
-          }}
-          disabled={roleLoading || !canNewBank}
-          aria-disabled={roleLoading || !canNewBank}
-          className={`rounded px-4 py-2 text-white ${
-            roleLoading || !canNewBank
-              ? "bg-green-400 opacity-60 cursor-not-allowed"
-              : "bg-green-600"
-          }`}
-          title={
-            roleLoading
-              ? "Memuat role…"
-              : !canNewBank
-              ? "Unauthorized"
-              : "Tambah bank baru"
-          }
-        >
-          New Record
-        </button>
+          >
+            Setting Potongan → Credit
+          </button>
+
+          {/* New Record -> admin & operator */}
+          <button
+            type="button"
+            onClick={() => {
+              if (!canNewBank || roleLoading) {
+                if (!roleLoading && !canNewBank) {
+                  alert("Unauthorized");
+                }
+                return;
+              }
+              const evt = new CustomEvent("open-bank-new");
+              document.dispatchEvent(evt);
+            }}
+            disabled={roleLoading || !canNewBank}
+            aria-disabled={roleLoading || !canNewBank}
+            className={`rounded px-4 py-2 text-white ${
+              roleLoading || !canNewBank
+                ? "bg-green-400 opacity-60 cursor-not-allowed"
+                : "bg-green-600"
+            }`}
+            title={
+              roleLoading
+                ? "Memuat role…"
+                : !canNewBank
+                ? "Unauthorized"
+                : "Tambah bank baru"
+            }
+          >
+            New Record
+          </button>
+        </div>
       </div>
-
+    
       <div className="overflow-auto rounded border bg-white">
         <table
           className="table-grid banks-grid min-w-[1000px]"
