@@ -261,7 +261,7 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
             <tr>
               <th className="text-left">Run</th>
               <th className="text-left">Requested</th>
-              <th className="text-left">Period (JKT)</th>
+              <th className="text-left">Period</th>
               <th className="text-left">Users</th>
               <th className="text-left">Rows</th>
               <th className="text-left">Amounts</th>
