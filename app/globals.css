@@ -28,12 +28,10 @@ html, body { height: 100%; }
   padding: 0.25rem 0.5rem;               /* lebih rapat */
 }
 
-/* === Zebra rows (abu samar) ===
-   IMPORTANT: jangan timpa row yang sudah punya class bg-* (contoh: Banks pakai bg-blue-200/bg-red-200)
-*/
-.table-grid tbody tr:nth-child(odd):not([class*="bg-"]) {
+/* Zebra rows (abu samar) — jangan timpa row yang memang sudah punya bg-... */
+.table-grid tbody tr:nth-child(odd):not([class^="bg-"]):not([class*=" bg-"]) {
   background-color: #ffffff;
 }
-.table-grid tbody tr:nth-child(even):not([class*="bg-"]) {
-  background-color: #f8fafc;             /* slate-50-ish, abu sangat samar */
+.table-grid tbody tr:nth-child(even):not([class^="bg-"]):not([class*=" bg-"]) {
+  background-color: #f8fafc; /* abu samar */
 }
