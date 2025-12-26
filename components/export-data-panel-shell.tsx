@@ -11,7 +11,7 @@ export default function ExportDataPanelShell() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold">Export Data Panel</h1>
+        <h1 className="text-lg font-semibold">Export Data Bracket</h1>
 
         <div className="flex items-center gap-2">
           <button
