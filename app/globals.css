@@ -13,15 +13,27 @@ html, body { height: 100%; }
 .table-grid th,
 .table-grid td {
   border: 1px solid #e5e7eb;             /* gray-200 */
-  padding: 0.5rem;                        /* p-2 */
+  padding: 0.5rem;                       /* p-2 */
 }
 
+/* header */
 .table-grid thead th {
-  background-color: #f9fafb;             /* gray-50 */
+  background-color: #edeff2;             /* gray-50 */
   font-weight: 600;
 }
 
+/* baris filter (kalau ada) */
 .table-grid thead .filters th {
-  background-color: #ffffff;              /* baris filter putih */
-  padding: 0.25rem 0.5rem;                /* lebih rapat */
+  background-color: #ffffff;             /* baris filter putih */
+  padding: 0.25rem 0.5rem;               /* lebih rapat */
+}
+
+/* === Zebra rows (abu samar) ===
+   IMPORTANT: jangan timpa row yang sudah punya class bg-* (contoh: Banks pakai bg-blue-200/bg-red-200)
+*/
+.table-grid tbody tr:nth-child(odd):not([class*="bg-"]) {
+  background-color: #ffffff;
+}
+.table-grid tbody tr:nth-child(even):not([class*="bg-"]) {
+  background-color: #f8fafc;             /* slate-50-ish, abu sangat samar */
 }
