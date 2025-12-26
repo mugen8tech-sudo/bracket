@@ -329,10 +329,10 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
           <colgroup>
             <col style={{ width: "17%" }} /> {/* Run */}
             <col style={{ width: "9%" }} /> {/* Requested */}
-            <col style={{ width: "5%" }} /> {/* By (NEW) */}
+            <col style={{ width: "8%" }} /> {/* By (NEW) */}
             <col style={{ width: "18%" }} /> {/* Period */}
             <col style={{ width: "17%" }} /> {/* Users + Rows (merged) */}
-            <col style={{ width: "18%" }} /> {/* Amounts */}
+            <col style={{ width: "15%" }} /> {/* Amounts */}
             <col style={{ width: "6%" }} /> {/* Status */}
             <col style={{ width: "10%" }} /> {/* Actions */}
           </colgroup>
