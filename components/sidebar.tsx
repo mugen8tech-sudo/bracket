@@ -115,7 +115,7 @@ export default function Sidebar() {
 
     {
       label: "Export Data Panel",
-      href: "/export_data_panel",
+      href: "/export_data_bracket",
       enabled: true,
       roles: ["admin", "operator", "cs", "cs_dp", "cs_wd"],
     },
