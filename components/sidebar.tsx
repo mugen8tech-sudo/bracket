@@ -113,6 +113,13 @@ export default function Sidebar() {
       roles: ["admin", "operator"],
     },
 
+    {
+      label: "Export Data Panel",
+      href: "/export_data_panel",
+      enabled: true,
+      roles: ["admin", "operator", "cs", "cs_dp", "cs_wd"],
+    },
+
     // Akuran (Settlements) → hanya admin
     {
       label: "Akuran",
