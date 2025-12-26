@@ -15,6 +15,7 @@ type ImportRunRow = {
   status: ImportStatus;
 
   requested_at: string;
+  requested_by: string; // NEW
   period_start_at: string;
   period_end_at: string;
 
@@ -33,6 +34,8 @@ type ImportRunRow = {
   panel_total_amount: number;
   bracket_total_amount: number;
 };
+
+const PAGE_SIZE = 10;
 
 function fmtJakarta(x?: string | null) {
   if (!x) return "-";
@@ -61,6 +64,13 @@ function kindLabel(k: ImportKind) {
   return k === "deposits" ? "Deposits" : "Withdrawals";
 }
 
+function shortUserId(x?: string | null) {
+  const s = String(x || "");
+  if (!s) return "-";
+  if (s.length <= 10) return s;
+  return `${s.slice(0, 6)}…${s.slice(-4)}`;
+}
+
 export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number }) {
   const supabase = supabaseBrowser();
 
@@ -70,6 +80,22 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
   const [error, setError] = useState<string>("");
 
   const [rowBusy, setRowBusy] = useState<Record<number, "process" | "cancel">>({});
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+
+  // NEW: map user_id -> display name (profiles.full_name)
+  const [byMap, setByMap] = useState<Record<string, string>>({});
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const [summary, setSummary] = useState({
+    total: 0,
+    queued: 0,
+    processing: 0,
+    done: 0,
+    cancelled: 0,
+    err: 0,
+  });
 
   useEffect(() => {
     (async () => {
@@ -100,9 +126,63 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadRuns() {
+  async function loadSummaryCounts() {
+    const base = () => supabase.from("import_runs").select("id", { count: "exact", head: true });
+
+    const [t, q, p, d, c, e] = await Promise.all([
+      base(),
+      base().eq("status", "queued"),
+      base().eq("status", "processing"),
+      base().eq("status", "done"),
+      base().eq("status", "cancelled"),
+      base().eq("status", "error"),
+    ]);
+
+    setSummary({
+      total: t.count ?? 0,
+      queued: q.count ?? 0,
+      processing: p.count ?? 0,
+      done: d.count ?? 0,
+      cancelled: c.count ?? 0,
+      err: e.count ?? 0,
+    });
+  }
+
+  async function loadByMap(userIds: string[]) {
+    const uniq = Array.from(new Set(userIds.filter(Boolean)));
+    if (uniq.length === 0) {
+      setByMap({});
+      return;
+    }
+
+    // profiles: user_id, full_name
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("user_id, full_name")
+      .in("user_id", uniq);
+
+    if (error) {
+      // jangan bikin UI error hanya karena lookup nama gagal
+      console.warn("loadByMap error:", error.message);
+      setByMap({});
+      return;
+    }
+
+    const m: Record<string, string> = {};
+    for (const r of (data || []) as any[]) {
+      const uid = String(r?.user_id || "");
+      if (!uid) continue;
+      m[uid] = String(r?.full_name || "").trim();
+    }
+    setByMap(m);
+  }
+
+  async function loadRuns(pageToLoad = page) {
     setLoading(true);
     setError("");
+
+    const from = (pageToLoad - 1) * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
 
     const resp = await supabase
       .from("import_runs")
@@ -112,6 +192,7 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
           "kind",
           "status",
           "requested_at",
+          "requested_by", // NEW
           "period_start_at",
           "period_end_at",
 
@@ -128,9 +209,11 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
           "panel_total_amount",
           "bracket_total_amount",
         ].join(", "),
+        { count: "exact" },
       )
       .order("requested_at", { ascending: false })
-      .limit(30);
+      .order("id", { ascending: false })
+      .range(from, to);
 
     setLoading(false);
 
@@ -141,23 +224,24 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
 
     const list = ((resp.data ?? []) as unknown) as ImportRunRow[];
     setRows(list);
+    setTotal(resp.count ?? list.length);
+    setPage(pageToLoad);
+
+    // NEW: lookup display names for By column (page size kecil, aman)
+    await loadByMap(list.map((r) => r.requested_by));
+
+    await loadSummaryCounts();
   }
 
   useEffect(() => {
     if (authorized !== "ok") return;
-    loadRuns();
+    loadRuns(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authorized, refreshKey]);
 
-  const summary = useMemo(() => {
-    const total = rows.length;
-    const queued = rows.filter((r) => r.status === "queued").length;
-    const processing = rows.filter((r) => r.status === "processing").length;
-    const done = rows.filter((r) => r.status === "done").length;
-    const cancelled = rows.filter((r) => r.status === "cancelled").length;
-    const err = rows.filter((r) => r.status === "error").length;
-    return { total, queued, processing, done, cancelled, err };
-  }, [rows]);
+  const pageLabel = useMemo(() => {
+    return `Page ${page} / ${totalPages}`;
+  }, [page, totalPages]);
 
   async function processNow(runId: number) {
     setRowBusy((m) => ({ ...m, [runId]: "process" }));
@@ -169,7 +253,7 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
       });
       const json = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(json?.error || "Process failed");
-      await loadRuns();
+      await loadRuns(page);
     } catch (e: any) {
       alert(e?.message || "Process failed");
     } finally {
@@ -193,7 +277,7 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
       });
       const json = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(json?.error || "Cancel failed");
-      await loadRuns();
+      await loadRuns(page);
     } catch (e: any) {
       alert(e?.message || "Cancel failed");
     } finally {
@@ -210,9 +294,7 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
   }
 
   if (authorized === "no") {
-    return (
-      <div className="rounded border bg-white p-4">Kamu tidak punya akses ke halaman ini.</div>
-    );
+    return <div className="rounded border bg-white p-4">Kamu tidak punya akses ke halaman ini.</div>;
   }
 
   return (
@@ -228,7 +310,7 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
 
         <button
           type="button"
-          onClick={loadRuns}
+          onClick={() => loadRuns(page)}
           className="rounded border px-3 py-2 text-sm hover:bg-gray-50"
           disabled={loading}
         >
@@ -242,18 +324,16 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
         </div>
       )}
 
-      {/* no horizontal scroll: table-fixed + colgroup + wrap */}
       <div className="w-full">
         <table className="table-grid table-fixed w-full text-sm">
           <colgroup>
-            {/* total 100% */}
             <col style={{ width: "17%" }} /> {/* Run */}
             <col style={{ width: "9%" }} /> {/* Requested */}
-            <col style={{ width: "20%" }} /> {/* Period */}
-            <col style={{ width: "12%" }} /> {/* Users */}
-            <col style={{ width: "12%" }} /> {/* Rows */}
+            <col style={{ width: "8%" }} /> {/* By (NEW) */}
+            <col style={{ width: "18%" }} /> {/* Period */}
+            <col style={{ width: "18%" }} /> {/* Users + Rows (merged) */}
             <col style={{ width: "14%" }} /> {/* Amounts */}
-            <col style={{ width: "6%" }} />  {/* Status */}
+            <col style={{ width: "6%" }} /> {/* Status */}
             <col style={{ width: "10%" }} /> {/* Actions */}
           </colgroup>
 
@@ -261,9 +341,9 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
             <tr>
               <th className="text-left">Run</th>
               <th className="text-left">Requested</th>
-              <th className="text-left">Period</th>
+              <th className="text-left">By</th>
+              <th className="text-left">Period (JKT)</th>
               <th className="text-left">Users</th>
-              <th className="text-left">Rows</th>
               <th className="text-left">Amounts</th>
               <th className="text-left">Status</th>
               <th className="text-left">Actions</th>
@@ -281,6 +361,7 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
 
               const fileLabel = r.file_name ?? r.panel_file_name ?? "-";
 
+              // rows info (sebelumnya kolom Rows)
               const totalApproved = Number(r.panel_approved_rows_total ?? 0);
               const outsideApproved = Number(r.panel_approved_rows_outside ?? 0);
               const inPeriodApproved = Number(r.panel_approved_rows ?? 0);
@@ -291,6 +372,9 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
               const req = fmtJakartaParts(r.requested_at);
               const start = fmtJakartaParts(r.period_start_at);
               const end = fmtJakartaParts(r.period_end_at);
+
+              const byName = (byMap[r.requested_by] || "").trim();
+              const byLabel = byName || shortUserId(r.requested_by);
 
               return (
                 <tr key={r.id}>
@@ -305,6 +389,13 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
                     <div className="font-mono text-xs">
                       <div className="font-semibold text-[12px]">{req.date}</div>
                       <div className="text-gray-700">{req.time}</div>
+                    </div>
+                  </td>
+
+                  {/* NEW: By */}
+                  <td className="align-top whitespace-normal break-words">
+                    <div className="text-xs">
+                      <div className="font-medium">{byLabel}</div>
                     </div>
                   </td>
 
@@ -325,8 +416,10 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
                     </div>
                   </td>
 
+                  {/* Users + Rows merged (with separator) */}
                   <td className="align-top whitespace-normal break-words">
                     <div className="text-xs space-y-1">
+                      {/* USERS block */}
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-gray-500">Users</span>
                         <span className="font-mono">{r.users_total}</span>
@@ -339,11 +432,11 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
                         <span className="text-gray-500">Missing</span>
                         <span className="font-mono">{r.missing_users}</span>
                       </div>
-                    </div>
-                  </td>
 
-                  <td className="align-top whitespace-normal break-words">
-                    <div className="text-xs space-y-1">
+                      {/* separator */}
+                      <div className="border-t pt-2 mt-2" />
+
+                      {/* ROWS block (moved from Rows column) */}
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-gray-500">Panel (in)</span>
                         <span className="font-mono">{inPeriodApproved}</span>
@@ -441,6 +534,43 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Pagination */}
+      <div className="flex justify-center">
+        <nav className="inline-flex items-center gap-1 text-sm">
+          <button
+            onClick={() => page > 1 && loadRuns(1)}
+            disabled={page <= 1 || loading}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            First
+          </button>
+          <button
+            onClick={() => page > 1 && loadRuns(page - 1)}
+            disabled={page <= 1 || loading}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Previous
+          </button>
+
+          <span className="px-3 py-1 rounded border bg-white">{pageLabel}</span>
+
+          <button
+            onClick={() => page < totalPages && loadRuns(page + 1)}
+            disabled={page >= totalPages || loading}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Next
+          </button>
+          <button
+            onClick={() => page < totalPages && loadRuns(totalPages)}
+            disabled={page >= totalPages || loading}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Last
+          </button>
+        </nav>
       </div>
     </section>
   );
