@@ -360,6 +360,9 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
               const canCancel = r.status === "queued";
 
               const fileLabel = r.file_name ?? r.panel_file_name ?? "-";
+              const panelAmt = Number(r.panel_total_amount ?? 0);
+              const bracketAmt = Number(r.bracket_total_amount ?? 0);
+              const missingAmt = panelAmt - bracketAmt;
 
               // rows info (sebelumnya kolom Rows)
               const totalApproved = Number(r.panel_approved_rows_total ?? 0);
@@ -465,11 +468,24 @@ export default function ImportRunsHistory({ refreshKey }: { refreshKey?: number 
                     <div className="text-xs space-y-1">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-gray-500">Panel</span>
-                        <span className="font-mono">{formatAmount(r.panel_total_amount)}</span>
+                        <span className="font-mono">{formatAmount(panelAmt)}</span>
                       </div>
+
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-gray-500">Bracket</span>
-                        <span className="font-mono">{formatAmount(r.bracket_total_amount)}</span>
+                        <span className="font-mono">{formatAmount(bracketAmt)}</span>
+                      </div>
+
+                      <div className="border-t pt-2 mt-2 flex items-center justify-between gap-2">
+                        <span className="text-gray-500">Missing</span>
+                        <span
+                          className={clsx(
+                            "font-mono",
+                            Math.abs(missingAmt) < 0.000001 ? "text-gray-500" : "text-amber-700",
+                          )}
+                        >
+                          {formatAmount(missingAmt)}
+                        </span>
                       </div>
                     </div>
                   </td>
