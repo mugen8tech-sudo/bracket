@@ -16,8 +16,7 @@ function fmtJakarta(x?: string | null) {
 }
 
 function kindLabel(k: ImportKind) {
-  if (k === "deposits") return "Deposits";
-  return "Withdrawals";
+  return k === "deposits" ? "Deposits" : "Withdrawals";
 }
 
 function statusLabel(s: ImportStatus) {
@@ -35,12 +34,10 @@ export default async function ImportRunDetailPage({ params }: { params: { id: st
       id, kind, status,
       requested_at,
       period_start_at, period_end_at,
-
       file_name,
       panel_file_name,
       panel_approved_rows_total,
       panel_approved_rows_outside,
-
       users_total, matched_users, missing_users,
       panel_approved_rows, bracket_posted_rows,
       panel_total_amount, bracket_total_amount,
@@ -60,7 +57,9 @@ export default async function ImportRunDetailPage({ params }: { params: { id: st
   if (canShowItems) {
     const { data: rows } = await supabase
       .from("import_run_items")
-      .select("username, panel_total_amount, bracket_total_amount, diff_amount, panel_cnt, bracket_cnt, status")
+      .select(
+        "username, panel_total_amount, bracket_total_amount, diff_amount, panel_cnt, bracket_cnt, status",
+      )
       .eq("run_id", id)
       .order("username", { ascending: true });
 
@@ -81,6 +80,17 @@ export default async function ImportRunDetailPage({ params }: { params: { id: st
 
   const allApprovedOutsidePeriod = approvedTotal > 0 && approvedInPeriod === 0;
 
+  const panelAmt = Number(run.panel_total_amount ?? 0);
+  const bracketAmt = Number(run.bracket_total_amount ?? 0);
+  const amountMissing = panelAmt - bracketAmt;
+
+  const usersTotal = Number(run.users_total ?? 0);
+  const usersMatched = Number(run.matched_users ?? 0);
+  const usersMissing = Number(run.missing_users ?? 0);
+
+  const rowsPanelIn = Number(run.panel_approved_rows ?? 0);
+  const rowsBracket = Number(run.bracket_posted_rows ?? 0);
+
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-semibold">Import Run #{run.id}</h1>
@@ -97,9 +107,9 @@ export default async function ImportRunDetailPage({ params }: { params: { id: st
             </tr>
 
             <tr>
-              <td>Requested at</td>
+              <td>Requested at (JKT)</td>
               <td>{fmtJakarta(run.requested_at)}</td>
-              <td>Period</td>
+              <td>Period (JKT)</td>
               <td>
                 {fmtJakarta(run.period_start_at)} - {fmtJakarta(run.period_end_at)}
               </td>
@@ -128,58 +138,92 @@ export default async function ImportRunDetailPage({ params }: { params: { id: st
       {allApprovedOutsidePeriod && (
         <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           Semua transaksi <b>Approved</b> di file berada di <b>luar periode</b> yang kamu pilih.
-          Cek ulang <b>Start/End</b> atau pastikan file export-nya benar.
+          Cek ulang <b>Start/End (JKT)</b> atau pastikan file export-nya benar.
           <div className="mt-1 text-xs">
             Outside: <b>{approvedOutside}</b> / Total Approved: <b>{approvedTotal}</b>
           </div>
         </div>
       )}
 
-      {/* Summary */}
+      {/* Summary (rapih: 3 blok terpisah) */}
       <div className="rounded border bg-white">
         <div className="p-3 border-b font-semibold">Summary</div>
-        <table className="table-grid w-full">
-          <tbody>
-            <tr>
-              <td className="w-56 font-semibold">Users</td>
-              <td className="text-right">{run.users_total ?? 0}</td>
 
-              <td className="w-56 font-semibold">Matched</td>
-              <td className="text-right">{run.matched_users ?? 0}</td>
-            </tr>
+        <div className="p-3 space-y-3">
+          {/* USERS: 3 kolom 1 baris */}
+          <div className="rounded border bg-white overflow-hidden">
+            <div className="px-3 py-2 border-b bg-gray-50 font-semibold text-sm">Users</div>
+            <table className="table-grid w-full">
+              <thead>
+                <tr>
+                  <th className="text-left">Users</th>
+                  <th className="text-left">Matched</th>
+                  <th className="text-left">Missing</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="text-right font-mono">{usersTotal}</td>
+                  <td className="text-right font-mono">{usersMatched}</td>
+                  <td className="text-right font-mono">{usersMissing}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
 
-            <tr>
-              <td className="font-semibold">Missing</td>
-              <td className="text-right">{run.missing_users ?? 0}</td>
+          {/* ROWS */}
+          <div className="rounded border bg-white overflow-hidden">
+            <div className="px-3 py-2 border-b bg-gray-50 font-semibold text-sm">Rows</div>
+            <table className="table-grid w-full">
+              <tbody>
+                <tr>
+                  <td className="font-semibold">Panel Approve Rows (In Period)</td>
+                  <td className="text-right font-mono">{rowsPanelIn}</td>
+                </tr>
+                <tr>
+                  <td className="font-semibold">Bracket Posted Rows</td>
+                  <td className="text-right font-mono">{rowsBracket}</td>
+                </tr>
+                <tr>
+                  <td className="font-semibold">Panel Approved Total (File)</td>
+                  <td className="text-right font-mono">{approvedTotal}</td>
+                </tr>
+                <tr>
+                  <td className="font-semibold">Approved Outside Period</td>
+                  <td className="text-right font-mono">{approvedOutside}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
 
-              <td className="font-semibold">Panel Approve Rows (In Period)</td>
-              <td className="text-right">{approvedInPeriod}</td>
-            </tr>
-
-            <tr>
-              <td className="font-semibold">Panel Approved Total (File)</td>
-              <td className="text-right">{approvedTotal}</td>
-
-              <td className="font-semibold">Approved Outside Period</td>
-              <td className="text-right">{approvedOutside}</td>
-            </tr>
-
-            <tr>
-              <td className="font-semibold">Bracket Posted Rows</td>
-              <td className="text-right">{run.bracket_posted_rows ?? 0}</td>
-
-              <td className="font-semibold">Total Amount Panel</td>
-              <td className="text-right font-mono">{formatAmount(run.panel_total_amount ?? 0)}</td>
-            </tr>
-
-            <tr>
-              <td className="font-semibold">Total Amount Bracket</td>
-              <td className="text-right font-mono">{formatAmount(run.bracket_total_amount ?? 0)}</td>
-              <td></td>
-              <td></td>
-            </tr>
-          </tbody>
-        </table>
+          {/* AMOUNTS: 3 kolom 1 baris + Missing */}
+          <div className="rounded border bg-white overflow-hidden">
+            <div className="px-3 py-2 border-b bg-gray-50 font-semibold text-sm">Amounts</div>
+            <table className="table-grid w-full">
+              <thead>
+                <tr>
+                  <th className="text-left">Panel</th>
+                  <th className="text-left">Bracket</th>
+                  <th className="text-left">Missing</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="text-right font-mono">{formatAmount(panelAmt)}</td>
+                  <td className="text-right font-mono">{formatAmount(bracketAmt)}</td>
+                  <td
+                    className={[
+                      "text-right font-mono",
+                      Math.abs(amountMissing) < 0.000001 ? "text-gray-600" : "text-amber-700 font-semibold",
+                    ].join(" ")}
+                  >
+                    {formatAmount(amountMissing)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
 
         {!canShowItems && (
           <div className="p-3 text-sm text-gray-600">
