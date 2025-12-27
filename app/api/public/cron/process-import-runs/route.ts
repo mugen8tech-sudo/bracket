@@ -18,14 +18,9 @@ function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
-/**
- * Vercel Cron bisa diamankan pakai env `CRON_SECRET`.
- * Saat cron jalan, Vercel akan mengirim Authorization header otomatis. :contentReference[oaicite:0]{index=0}
- * Untuk manual test, kita juga support `?secret=...`
- */
 function isAuthorized(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return true; // fallback (boleh kamu ubah jadi "false" kalau mau wajib)
+  if (!secret) return true;
   const auth = req.headers.get("authorization") || "";
   if (auth === `Bearer ${secret}`) return true;
   const url = new URL(req.url);
@@ -44,6 +39,7 @@ function normHeader(s: unknown) {
 function findCol(headers: unknown[], candidates: string[]) {
   const h = headers.map(normHeader);
   const c = candidates.map((x) => normHeader(x));
+
   for (let i = 0; i < h.length; i++) {
     if (!h[i]) continue;
     if (c.includes(h[i])) return i;
@@ -57,21 +53,64 @@ function findCol(headers: unknown[], candidates: string[]) {
   return -1;
 }
 
-function parseMoneyToCents(v: unknown) {
+function parseMoneyToNumber(v: unknown) {
   if (v == null || v === "") return 0;
-  if (typeof v === "number" && Number.isFinite(v)) return Math.round(v * 100);
+  if (typeof v === "number" && Number.isFinite(v)) return v;
 
-  const s = String(v)
-    .trim()
-    .replace(/,/g, "")
-    .replace(/[^\d.-]/g, "");
+  let s = String(v).trim();
+  if (!s) return 0;
+
+  // keep only digits, separators and minus
+  s = s.replace(/[^\d,.\-]/g, "");
+
+  const hasDot = s.includes(".");
+  const hasComma = s.includes(",");
+
+  const normalizeSingleSep = (sep: "." | ",") => {
+    const parts = s.split(sep);
+    const last = parts[parts.length - 1] ?? "";
+    // if last looks like decimals (1-2 digits) => decimal sep
+    if (last.length === 1 || last.length === 2) {
+      s = parts.slice(0, -1).join("") + "." + last;
+    } else {
+      // else thousands sep
+      s = parts.join("");
+    }
+  };
+
+  if (hasDot && hasComma) {
+    const lastDot = s.lastIndexOf(".");
+    const lastComma = s.lastIndexOf(",");
+    if (lastDot > lastComma) {
+      // "20,000.00"
+      s = s.replace(/,/g, "");
+    } else {
+      // "20.000,00"
+      s = s.replace(/\./g, "").replace(/,/g, ".");
+    }
+  } else if (hasComma) normalizeSingleSep(",");
+  else if (hasDot) normalizeSingleSep(".");
+
   const n = Number(s || 0);
   if (!Number.isFinite(n)) return 0;
+  return n;
+}
+
+/**
+ * RULE BARU:
+ * - kalau scaleAllX1000 aktif => SCALE SEMUA AMOUNT x1000 (termasuk yang >= 1000)
+ * - kalau tidak => no scale
+ */
+function parseMoneyToCents(v: unknown, scaleAllX1000: boolean) {
+  const n0 = parseMoneyToNumber(v);
+  let n = n0;
+
+  if (scaleAllX1000 && n !== 0) n = n * 1000;
+
   return Math.round(n * 100);
 }
 
 function excelSerialToIsoJkt(serial: number) {
-  // Excel serial -> y/m/d/h/m/s via xlsx parse_date_code
   const p = XLSX.SSF.parse_date_code(serial);
   if (!p) return "";
   const yyyy = String(p.y).padStart(4, "0");
@@ -80,7 +119,6 @@ function excelSerialToIsoJkt(serial: number) {
   const HH = String(p.H).padStart(2, "0");
   const MM = String(p.M).padStart(2, "0");
   const SS = String(Math.floor(p.S || 0)).padStart(2, "0");
-  // treat as Asia/Jakarta wall time
   return new Date(`${yyyy}-${mm}-${dd}T${HH}:${MM}:${SS}+07:00`).toISOString();
 }
 
@@ -94,22 +132,57 @@ function parseApproveDateToIso(v: unknown) {
   const s0 = String(v).trim();
   if (!s0) return "";
 
-  // common: "YYYY-MM-DD HH:mm:ss" or "YYYY-MM-DDTHH:mm:ss"
+  // "YYYY-MM-DD HH:mm:ss" or "YYYY-MM-DDTHH:mm:ss"
   const s1 = s0.replace(" ", "T");
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(s1)) {
     const s2 = s1.length === 16 ? `${s1}:00` : s1;
     return new Date(`${s2}+07:00`).toISOString();
   }
 
-  // dd/MM/yyyy HH:mm:ss (fallback)
-  const m = s0.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (m) {
-    const dd = m[1], mm = m[2], yyyy = m[3];
-    const HH = m[4], MM = m[5], SS = m[6] ?? "00";
+  // dd/MM/yyyy HH:mm:ss
+  const m1 = s0.match(
+    /^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/
+  );
+  if (m1) {
+    const dd = m1[1],
+      mm = m1[2],
+      yyyy = m1[3];
+    const HH = m1[4],
+      MM = m1[5],
+      SS = m1[6] ?? "00";
     return new Date(`${yyyy}-${mm}-${dd}T${HH}:${MM}:${SS}+07:00`).toISOString();
   }
 
-  // last resort: Date.parse (assume already includes timezone)
+  // dd-MMM-yyyy HH:mm:ss (ex: 27-Dec-2025 16:54:58)
+  const m2 = s0.match(
+    /^(\d{1,2})-([A-Za-z]{3})-(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/
+  );
+  if (m2) {
+    const dd = String(m2[1]).padStart(2, "0");
+    const monKey = String(m2[2]).toLowerCase();
+    const yyyy = String(m2[3]);
+    const HH = String(m2[4]);
+    const MM = String(m2[5]);
+    const SS = String(m2[6] ?? "00").padStart(2, "0");
+
+    const monthMap: Record<string, string> = {
+      jan: "01",
+      feb: "02",
+      mar: "03",
+      apr: "04",
+      may: "05",
+      jun: "06",
+      jul: "07",
+      aug: "08",
+      sep: "09",
+      oct: "10",
+      nov: "11",
+      dec: "12",
+    };
+    const mm = monthMap[monKey];
+    if (mm) return new Date(`${yyyy}-${mm}-${dd}T${HH}:${MM}:${SS}+07:00`).toISOString();
+  }
+
   const t = Date.parse(s0);
   if (!Number.isNaN(t)) return new Date(t).toISOString();
 
@@ -130,7 +203,7 @@ async function fetchAllBracketRows(args: {
   startIso: string;
   endIso: string;
 }) {
-  const table = args.kind; // public.deposits / public.withdrawals (nama tabel sama dengan kind)
+  const table = args.kind;
   const pageSize = 1000;
 
   let offset = 0;
@@ -163,6 +236,54 @@ async function fetchAllBracketRows(args: {
   }
 
   return out;
+}
+
+function detectHeaderRow(matrix: any[][]) {
+  // scan first N rows to find the real header row
+  const maxScan = Math.min(30, matrix.length);
+  const userCandidates = [
+    "user name",
+    "login id",
+    "username",
+    "user id",
+    "userid",
+    "member",
+    "member id",
+    "player",
+  ];
+  const netAmountCandidates = ["nett amount", "net amount"];
+  const amountCandidates = [
+    "amount",
+    "nominal",
+    "gross amount",
+    "deposit amount",
+    "withdraw amount",
+  ];
+  const actionCandidates = ["status", "action", "result"];
+  const approveCandidates = [
+    "approved date",
+    "approve date",
+    "approved time",
+    "approve time",
+    "date",
+    "time",
+  ];
+
+  for (let r = 0; r < maxScan; r++) {
+    const headers = matrix[r] || [];
+    if (!headers.length) continue;
+
+    const iUser = findCol(headers, userCandidates);
+    const iNet = findCol(headers, netAmountCandidates);
+    const iAmt = iNet >= 0 ? iNet : findCol(headers, amountCandidates);
+    const iAct = findCol(headers, actionCandidates);
+    const iApv = findCol(headers, approveCandidates);
+
+    if (iUser >= 0 && iAmt >= 0 && iAct >= 0 && iApv >= 0) {
+      return { headerRowIndex: r, iUser, iAmt, iAct, iApv };
+    }
+  }
+  return null;
 }
 
 export async function GET(req: NextRequest) {
@@ -204,7 +325,6 @@ export async function GET(req: NextRequest) {
   for (const run of runs) {
     if (processed.length >= limit) break;
 
-    // claim: hanya 1 worker yang sukses ubah queued -> processing
     const claim = await supabaseAdmin
       .from("import_runs")
       .update({
@@ -221,7 +341,7 @@ export async function GET(req: NextRequest) {
       processed.push({ id: run.id, status: "claim_error", error: claim.error.message });
       continue;
     }
-    if (!claim.data) continue; // sudah di-claim worker lain
+    if (!claim.data) continue;
 
     try {
       const kind = run.kind as ImportKind;
@@ -229,7 +349,6 @@ export async function GET(req: NextRequest) {
       const startIso = String(run.period_start_at);
       const endIso = String(run.period_end_at);
 
-      // 1) download xlsx dari storage
       const { data: blob, error: dErr } = await supabaseAdmin.storage
         .from("import_exports")
         .download(String(run.storage_path));
@@ -243,38 +362,36 @@ export async function GET(req: NextRequest) {
       const ws = wb.Sheets[sheetName];
       const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: true }) as any[][];
 
-      const headers = matrix[0] || [];
-      if (!headers.length) throw new Error("Header row not found");
+      const hdr = detectHeaderRow(matrix);
+      if (!hdr) throw new Error("Header row not found / columns not detected");
 
-      // 2) detect kolom (lebih kompleks/synonyms)
-      const userCandidates = [
-        "login id",
-        "username",
-        "user id",
-        "userid",
-        "member",
-        "member id",
-        "player",
-      ];
-      const amountCandidates = ["amount", "nominal", "gross amount", "deposit amount", "withdraw amount"];
-      const actionCandidates = ["action", "status", "result"];
-      const approveCandidates = ["approve date", "approved date", "approve time", "approved time", "date", "time"];
+      const { headerRowIndex, iUser, iAmt, iAct, iApv } = hdr;
 
-      const iUser = findCol(headers, userCandidates);
-      const iAmt = findCol(headers, amountCandidates);
-      const iAct = findCol(headers, actionCandidates);
-      const iApv = findCol(headers, approveCandidates);
+      // =========================================================
+      // ✅ DETEKSI SCALE GLOBAL BERDASARKAN 25% DARI FILE (APPROVED)
+      // Rule:
+      // - jika >= 25% dari Approved rows punya amount < 1000 => scale SEMUA amount x1000
+      // - selain itu => tidak scale sama sekali
+      // =========================================================
+      let approvedForScale = 0;
+      let lt1000Count = 0;
 
-      if (iUser < 0 || iAmt < 0 || iAct < 0 || iApv < 0) {
-        throw new Error(
-          `Missing required columns. Detected indexes: user=${iUser}, amount=${iAmt}, action=${iAct}, approve=${iApv}`
-        );
+      for (let r = headerRowIndex + 1; r < matrix.length; r++) {
+        const row = matrix[r] || [];
+
+        const act = String(row[iAct] ?? "").trim().toLowerCase();
+        if (act !== "approved") continue;
+
+        const n = parseMoneyToNumber(row[iAmt]);
+        if (!(n > 0)) continue;
+
+        approvedForScale += 1;
+        if (n < 1000) lt1000Count += 1;
       }
 
-      // 3) parse panel rows
-      // panelApprovedRows = Approved IN PERIOD (dipakai untuk matching)
-      // panelApprovedRowsTotal = Approved TOTAL di file (untuk info operator)
-      // panelApprovedRowsOutside = Approved tapi approve_date di luar period
+      const pctLt1000 = approvedForScale > 0 ? lt1000Count / approvedForScale : 0;
+      const scaleAllX1000 = pctLt1000 >= 0.25;
+
       let panelApprovedRows = 0;
       let panelApprovedRowsTotal = 0;
       let panelApprovedRowsOutside = 0;
@@ -283,7 +400,7 @@ export async function GET(req: NextRequest) {
 
       const panelAgg = new Map<string, { sumCents: number; cnt: number }>();
 
-      for (let r = 1; r < matrix.length; r++) {
+      for (let r = headerRowIndex + 1; r < matrix.length; r++) {
         const row = matrix[r] || [];
         const usernameKey = keyUsername(row[iUser]);
         if (!usernameKey) continue;
@@ -294,17 +411,16 @@ export async function GET(req: NextRequest) {
         const approveIso = parseApproveDateToIso(row[iApv]);
         if (!approveIso) continue;
 
-        // ✅ count TOTAL approved (yang punya approve date valid)
         panelApprovedRowsTotal += 1;
 
         const inPeriod = !(approveIso < startIso || approveIso > endIso);
         if (!inPeriod) {
-          // ✅ outside period tetap dihitung, tapi TIDAK masuk matching
           panelApprovedRowsOutside += 1;
           continue;
         }
 
-        const cents = parseMoneyToCents(row[iAmt]);
+        const cents = parseMoneyToCents(row[iAmt], scaleAllX1000);
+
         panelApprovedRows += 1;
         panelTotalCents += cents;
 
@@ -314,10 +430,9 @@ export async function GET(req: NextRequest) {
         panelAgg.set(usernameKey, prev);
       }
 
-      // 4) fetch bracket rows (posted + txn_at in period)
       const bracketRows = await fetchAllBracketRows({ tenant_id, kind, startIso, endIso });
 
-      let bracketPostedRows = bracketRows.length;
+      const bracketPostedRows = bracketRows.length;
       let bracketTotalCents = 0;
 
       const bracketAgg = new Map<string, { sumCents: number; cnt: number }>();
@@ -333,7 +448,6 @@ export async function GET(req: NextRequest) {
         bracketAgg.set(k, prev);
       }
 
-      // 5) union users & build items
       const users = new Set<string>();
       for (const k of panelAgg.keys()) users.add(k);
       for (const k of bracketAgg.keys()) users.add(k);
@@ -369,7 +483,6 @@ export async function GET(req: NextRequest) {
         };
       });
 
-      // 6) replace items (idempotent)
       await supabaseAdmin.from("import_run_items").delete().eq("run_id", run.id);
 
       const batchSize = 500;
@@ -379,12 +492,11 @@ export async function GET(req: NextRequest) {
         if (iErr) throw new Error(iErr.message);
       }
 
-      // 7) update run summary + done
       const derivedFileName =
         run.file_name ||
         run.panel_file_name ||
         (run.storage_path ? String(run.storage_path).split("/").pop() : null);
-      
+
       const { error: uErr } = await supabaseAdmin
         .from("import_runs")
         .update({
@@ -395,7 +507,6 @@ export async function GET(req: NextRequest) {
           missing_users: missingUsers,
 
           panel_approved_rows: panelApprovedRows,
-          // ✅ NEW counters
           panel_approved_rows_total: panelApprovedRowsTotal,
           panel_approved_rows_outside: panelApprovedRowsOutside,
 
@@ -403,7 +514,6 @@ export async function GET(req: NextRequest) {
           panel_total_amount: centsToNumber(panelTotalCents),
           bracket_total_amount: centsToNumber(bracketTotalCents),
 
-          // ✅ ensure filename gets stored (at least after processed)
           file_name: run.file_name ?? derivedFileName,
           panel_file_name: run.panel_file_name ?? derivedFileName,
         })
@@ -422,6 +532,9 @@ export async function GET(req: NextRequest) {
         panelApprovedRowsTotal,
         panelApprovedRowsOutside,
         fileName: derivedFileName,
+        scaleAllX1000,
+        pctLt1000,
+        approvedForScale,
         status: "done",
       });
     } catch (e: any) {
