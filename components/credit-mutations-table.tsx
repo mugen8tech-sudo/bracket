@@ -42,6 +42,12 @@ function kindsForCat(cat: "ALL" | "DP" | "WD" | "ADJ" | "TOPUP") {
   }
 }
 
+function isReversalCreditRow(r: CreditMutation) {
+  const k = (r.kind ?? "").toUpperCase();
+  if (k.includes("REVERSAL")) return true;
+  return (r.description ?? "").toLowerCase().includes("reversal");
+}
+
 /** ================= Types (mengikuti skema kamu) ================= **/
 type CreditMutation = {
   id: number;
@@ -357,7 +363,13 @@ export default function CreditMutationsTable() {
                       </td>
                       <td>{cat}</td>
                       <td className="whitespace-normal break-words">{renderDesc(r)}</td>
-                      <td>{formatAmount(r.amount)}</td>
+                      <td
+                        className={`tabular-nums ${
+                          isReversalCreditRow(r) ? "text-red-600 dark:text-red-400" : ""
+                        }`}
+                      >
+                        {formatAmount(r.amount)}
+                      </td>
                       <td>{formatAmount(r.credit_before)}</td>
                       <td>{formatAmount(r.credit_after)}</td>
                       <td>{creator}</td>
