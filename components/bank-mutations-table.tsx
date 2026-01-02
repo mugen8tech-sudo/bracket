@@ -44,6 +44,11 @@ type DepositLite = {
   lead_id: number | null;
   performed_at: string;
   description: string | null;
+
+  // NEW (untuk detail di kolom Amount)
+  amount_gross: number | string;
+  fee_amount: number | string;
+  amount_net: number | string;
 };
 
 type WithdrawalLite = {
@@ -728,7 +733,7 @@ export default function BankMutationsTable() {
       refIds.length
         ? supabase
             .from("deposits")
-            .select("id, username, lead_id, performed_at, description")
+            .select("id, username, lead_id, performed_at, description, amount_gross, fee_amount, amount_net")
             .in("id", refIds)
         : Promise.resolve({ data: [] as any[] }),
       refIds.length
@@ -1295,8 +1300,22 @@ export default function BankMutationsTable() {
                     <td className="whitespace-normal break-words">
                       {descDisplay}
                     </td>
-                    <td className="text-right">
-                      {formatAmount(r.amount)}
+                    <td className="text-right align-top">
+                      {/* Amount NET (yang sekarang) */}
+                      <div>{formatAmount(r.amount)}</div>
+
+                      {/* Detail khusus Deposit */}
+                      {(r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") &&
+                        r.deposit_id &&
+                        depositMap[r.deposit_id] && (
+                          <>
+                            <div className="my-1 h-px bg-gray-200" />
+                            <div className="text-xs text-gray-600">
+                              <div>Gross: {formatAmount(depositMap[r.deposit_id].amount_gross)}</div>
+                              <div>Fee: {formatAmount(depositMap[r.deposit_id].fee_amount)}</div>
+                            </div>
+                          </>
+                        )}
                     </td>
                     <td className="text-right">
                       {formatAmount(r.balance_before)}
