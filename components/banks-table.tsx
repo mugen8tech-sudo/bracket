@@ -1,3 +1,4 @@
+// components/banks-table.tsx
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
@@ -178,7 +179,9 @@ export default function BanksTable() {
 
   // ====== setting potongan langsung -> dampak credit tenant ======
   const [showSetting, setShowSetting] = useState(false);
-  const [hitCredit, setHitCredit] = useState<boolean>(true);
+
+  type CreditBasis = "NET" | "GROSS" | "FLOOR";
+  const [creditBasis, setCreditBasis] = useState<CreditBasis>("NET");
 
   // ====== NEW BANK modal ======
   const [showNew, setShowNew] = useState(false);
@@ -445,10 +448,18 @@ export default function BanksTable() {
 
       const { data: setting } = await supabase
         .from("tenant_settings")
-        .select("bank_direct_fee_hits_credit")
+        .select("bank_direct_fee_credit_basis, bank_direct_fee_hits_credit")
         .eq("tenant_id", prof.tenant_id)
         .maybeSingle();
-      setHitCredit(setting?.bank_direct_fee_hits_credit ?? true);
+
+      // Prioritas: kolom baru → fallback kolom lama (boolean)
+      const basisFromNew = (setting as any)?.bank_direct_fee_credit_basis as CreditBasis | null | undefined;
+      if (basisFromNew === "NET" || basisFromNew === "GROSS" || basisFromNew === "FLOOR") {
+        setCreditBasis(basisFromNew);
+      } else {
+        const old = (setting as any)?.bank_direct_fee_hits_credit;
+        setCreditBasis((old ?? true) ? "NET" : "GROSS");
+      }
     }
 
     const { data, error } = await supabase
@@ -804,7 +815,13 @@ export default function BanksTable() {
     // lanjutkan proses simpan seperti biasa
     const { error } = await supabase.from("tenant_settings").upsert({
       tenant_id: prof?.tenant_id,
-      bank_direct_fee_hits_credit: hitCredit,
+
+      // NEW: 3 opsi (utama)
+      bank_direct_fee_credit_basis: creditBasis,
+
+      // OPTIONAL: tetap isi kolom lama untuk kompatibilitas
+      bank_direct_fee_hits_credit: creditBasis === "NET",
+
       updated_at: new Date().toISOString(),
       updated_by: user.id ?? null,
     });
@@ -1272,17 +1289,50 @@ export default function BanksTable() {
                 Atur <b>dampak potongan langsung</b> terhadap <b>credit tenant</b>{" "}
                 saat <b>Deposit</b>:
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  id="hitcredit"
-                  type="checkbox"
-                  checked={hitCredit}
-                  onChange={(e) => setHitCredit(e.target.checked)}
-                />
-                <label htmlFor="hitcredit">
-                  <b>ON</b> = credit dikurangi <b>NET</b>. &nbsp;Matikan (OFF) =
-                  credit dikurangi <b>GROSS</b>.
+              <div className="space-y-2">
+                <label className="flex items-start gap-2">
+                  <input
+                    type="radio"
+                    name="creditBasis"
+                    checked={creditBasis === "NET"}
+                    onChange={() => setCreditBasis("NET")}
+                  />
+                  <span>
+                    <b>ON</b> = credit dikurangi <b>NET</b>
+                  </span>
                 </label>
+
+                <label className="flex items-start gap-2">
+                  <input
+                    type="radio"
+                    name="creditBasis"
+                    checked={creditBasis === "GROSS"}
+                    onChange={() => setCreditBasis("GROSS")}
+                  />
+                  <span>
+                    <b>OFF</b> = credit dikurangi <b>GROSS</b>
+                  </span>
+                </label>
+
+                <label className="flex items-start gap-2">
+                  <input
+                    type="radio"
+                    name="creditBasis"
+                    checked={creditBasis === "FLOOR"}
+                    onChange={() => setCreditBasis("FLOOR")}
+                  />
+                  <span>
+                    <b>FLOOR</b> = credit dikurangi <b>floor(GROSS/1000)*1000</b>
+                    <div className="text-xs text-gray-500">
+                      contoh: 49,999.00 → 49,000.00
+                    </div>
+                  </span>
+                </label>
+
+                <div className="text-xs text-gray-500 pt-2">
+                  Catatan: jika bank bertanda <b>Is Pulsa</b>, maka Deposit & Assign PDP
+                  selalu mengurangi credit sebesar <b>GROSS</b> (override semua mode).
+                </div>
               </div>
             </div>
             <div className="border-t p-4 flex justify-end gap-2">
