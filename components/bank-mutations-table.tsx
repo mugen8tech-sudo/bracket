@@ -1310,9 +1310,19 @@ export default function BankMutationsTable() {
                         depositMap[r.deposit_id] && (
                           <>
                             <div className="my-1 h-px bg-gray-200" />
-                            <div className="text-xs text-gray-600">
-                              <div>Gross: {formatAmount(depositMap[r.deposit_id].amount_gross)}</div>
-                              <div>Fee: {formatAmount(depositMap[r.deposit_id].fee_amount)}</div>
+                            <div className="text-[11px] leading-4 text-emerald-700/60 dark:text-emerald-200/70">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-left">Gross:</span>
+                                <span className="text-right tabular-nums whitespace-nowrap">
+                                  {formatAmount(depositMap[r.deposit_id].amount_gross)}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-left">Fee:</span>
+                                <span className="text-right tabular-nums whitespace-nowrap">
+                                  {formatAmount(depositMap[r.deposit_id].fee_amount)}
+                                </span>
+                              </div>
                             </div>
                           </>
                         )}
