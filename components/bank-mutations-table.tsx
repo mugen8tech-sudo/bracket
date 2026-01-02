@@ -793,6 +793,20 @@ export default function BankMutationsTable() {
   const isReversalOfPDP = (r: BankMutationRow) =>
     r.kind === "REVERSAL_PENDING_DEPOSIT" || !!revPdpTimeMap[r.id];
 
+  // helper: untuk pewarnaan Amount (merah kalau REVERSAL)
+  const isReversalRowForAmount = (r: BankMutationRow) => {
+    if (isReversalOfPDP(r)) return true;
+    if (
+      r.kind === "REVERSAL_DEPOSIT" ||
+      r.kind === "REVERSAL_WITHDRAWAL" ||
+      r.kind === "REVERSAL_PENDING_DEPOSIT"
+    )
+      return true;
+
+    // fallback: kalau description mengandung kata "reversal" (mis. reversal fee)
+    return (r.description ?? "").toLowerCase().includes("reversal");
+  };
+
   // ===== Cat kolom
   const catLabelForRow = (r: BankMutationRow): string => {
     if (r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL")
@@ -1302,7 +1316,13 @@ export default function BankMutationsTable() {
                     </td>
                     <td className="text-right align-top">
                       {/* Amount NET (yang sekarang) */}
-                      <div>{formatAmount(r.amount)}</div>
+                      <div
+                        className={`tabular-nums ${
+                          isReversalRowForAmount(r) ? "text-red-600 dark:text-red-400" : ""
+                        }`}
+                      >
+                        {formatAmount(r.amount)}
+                      </div>
 
                       {/* Detail khusus Deposit */}
                       {(r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") &&
