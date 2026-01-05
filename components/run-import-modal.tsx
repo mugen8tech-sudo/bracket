@@ -105,7 +105,9 @@ export default function RunImportModal({
     if (!open) return;
     (async () => {
       setAuthLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) {
         setRole("other");
         setTenantId("");
@@ -151,7 +153,8 @@ export default function RunImportModal({
     const sISO = jktLocalToISO(startLocal);
     const eISO = jktLocalToISO(endLocal);
     if (!sISO || !eISO) return "Start/End tidak valid.";
-    if (new Date(sISO).getTime() > new Date(eISO).getTime()) return "Start tidak boleh lebih besar dari End.";
+    if (new Date(sISO).getTime() > new Date(eISO).getTime())
+      return "Start tidak boleh lebih besar dari End.";
 
     if (needDep && !fileDep) return "File deposit wajib diupload.";
     if (needWd && !fileWd) return "File withdrawal wajib diupload.";
@@ -176,7 +179,9 @@ export default function RunImportModal({
       return;
     }
 
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) {
       alert("Session habis. Silakan login ulang.");
       return;
@@ -261,16 +266,28 @@ export default function RunImportModal({
         onKeyDown={(e) => {
           if (guard.submitting && e.key === "Enter") e.preventDefault();
         }}
-        className="bg-white rounded border w-full max-w-2xl mt-10"
+        className="w-full max-w-2xl rounded border bg-white shadow"
       >
-        <div className="p-4 border-b font-semibold">Run Import</div>
+        {/* header (samain dengan Run Export) */}
+        <div className="p-4 border-b flex items-center justify-between">
+          <div className="font-semibold">Run Import</div>
+          <button
+            type="button"
+            className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
+            onClick={onClose}
+            disabled={guard.submitting}
+          >
+            Close
+          </button>
+        </div>
 
-        <div className="p-4 space-y-3 text-sm">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs mb-1">Import type</label>
+        <div className="p-4 space-y-4">
+          {/* row 1: menu + info box */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="space-y-1">
+              <div className="text-sm text-gray-700">Menu</div>
               <select
-                className="border rounded px-3 py-2 w-full"
+                className="w-full rounded border px-3 py-2"
                 value={mode}
                 onChange={(e) => setMode(e.target.value as ImportMode)}
               >
@@ -278,50 +295,53 @@ export default function RunImportModal({
                 <option value="withdrawals">Withdrawals</option>
                 <option value="both">Deposits + Withdrawals</option>
               </select>
-            </div>
+            </label>
 
-            <div className="flex items-end">
-              <div className="text-xs text-gray-600">
-                Setelah Submit, request disimpan sebagai <b>QUEUED</b> dan diproses di belakang.
-              </div>
+            <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+              Pilih menu yang ingin di-import, pastikan File yang di-upload dan Periode yang diminta
+              sudah benar.
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs mb-1">Start (Asia/Jakarta)</label>
+          {/* row 2: periode */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="space-y-1">
+              <div className="text-sm text-gray-700">Start (JKT)</div>
               <input
                 type="datetime-local"
                 step="1"
-                className="border rounded px-3 py-2 w-full"
+                className="w-full rounded border px-3 py-2"
                 value={startLocal}
                 onChange={(e) => setStartLocal(e.target.value)}
                 required
               />
-            </div>
-            <div>
-              <label className="block text-xs mb-1">End (Asia/Jakarta)</label>
+            </label>
+
+            <label className="space-y-1">
+              <div className="text-sm text-gray-700">End (JKT)</div>
               <input
                 type="datetime-local"
                 step="1"
-                className="border rounded px-3 py-2 w-full"
+                className="w-full rounded border px-3 py-2"
                 value={endLocal}
                 onChange={(e) => setEndLocal(e.target.value)}
                 required
               />
-            </div>
+            </label>
           </div>
 
+          {/* uploads */}
           {needDep && (
-            <div>
-              <label className="block text-xs mb-1">Upload Export Deposits (.xlsx)</label>
+            <div className="space-y-1">
+              <div className="text-sm text-gray-700">Upload Export Deposits (.xlsx)</div>
               <input
                 type="file"
+                className="w-full text-sm"
                 accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 onChange={(e) => setFileDep(e.target.files?.[0] || null)}
               />
               {fileDep && (
-                <div className="text-xs text-gray-600 mt-1">
+                <div className="text-xs text-gray-600">
                   Selected: <b>{fileDep.name}</b>
                 </div>
               )}
@@ -329,43 +349,48 @@ export default function RunImportModal({
           )}
 
           {needWd && (
-            <div>
-              <label className="block text-xs mb-1">Upload Export Withdrawals (.xlsx)</label>
+            <div className="space-y-1">
+              <div className="text-sm text-gray-700">Upload Export Withdrawals (.xlsx)</div>
               <input
                 type="file"
+                className="w-full text-sm"
                 accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 onChange={(e) => setFileWd(e.target.files?.[0] || null)}
               />
               {fileWd && (
-                <div className="text-xs text-gray-600 mt-1">
+                <div className="text-xs text-gray-600">
                   Selected: <b>{fileWd.name}</b>
                 </div>
               )}
             </div>
           )}
 
-          <div className="text-xs text-gray-500">
-            Akses: admin/operator/cs/cs_dp/cs_wd. Status run akan muncul di list history.
-          </div>
+          {!allowed && !authLoading && (
+            <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              Role kamu tidak punya akses untuk Run Import.
+            </div>
+          )}
         </div>
 
-        <div className="border-t p-4 flex justify-end gap-2">
+        {/* footer (samain dengan Run Export) */}
+        <div className="p-4 border-t flex items-center justify-end gap-2">
           <button
             type="button"
+            className="rounded border px-4 py-2 hover:bg-gray-50 disabled:opacity-50"
             onClick={onClose}
-            className="rounded px-4 py-2 bg-gray-100"
             disabled={guard.submitting}
             aria-disabled={guard.submitting}
           >
-            Close
+            Cancel
           </button>
+
           <button
             type="submit"
-            className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-60"
+            className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-50"
             disabled={guard.submitting || authLoading}
             aria-disabled={guard.submitting || authLoading}
           >
-            {guard.submitting ? "Submitting…" : "Submit"}
+            {guard.submitting ? "Submitting..." : "Run Import"}
           </button>
         </div>
       </form>
