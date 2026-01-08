@@ -19,7 +19,12 @@ type IBTRow = {
   created_by: string;
 };
 
-type BankLite = { id: number; bank_code: string; account_name: string; account_no: string; };
+type BankLite = {
+  id: number;
+  bank_code: string;
+  account_name: string;
+  account_no: string;
+};
 type ProfileLite = { user_id: string; full_name: string | null };
 
 function startOfDayJakartaISO(d: string) {
@@ -34,7 +39,9 @@ function todayJakartaYMD() {
 function fmtIdDateTime(d: string) {
   const dt = new Date(d);
   const date = dt.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" });
-  const time = dt.toLocaleTimeString("id-ID", { hour12: false, timeZone: "Asia/Jakarta" }).replace(/:/g, ".");
+  const time = dt
+    .toLocaleTimeString("id-ID", { hour12: false, timeZone: "Asia/Jakarta" })
+    .replace(/:/g, ".");
   return `${date}, ${time}`;
 }
 const PAGE_SIZE = 25;
@@ -71,25 +78,32 @@ export default function InterbankTransfersTable() {
     const to = from + PAGE_SIZE - 1;
 
     const { data, count, error } = await q.range(from, to);
-    if (error) { setLoading(false); alert(error.message); return; }
+    if (error) {
+      setLoading(false);
+      alert(error.message);
+      return;
+    }
     const list = (data as IBTRow[]) ?? [];
 
     // Collect lookups
     const bankIds = new Set<number>();
     const userIds = new Set<string>();
     for (const r of list) {
-      bankIds.add(r.bank_from_id); bankIds.add(r.bank_to_id);
+      bankIds.add(r.bank_from_id);
+      bankIds.add(r.bank_to_id);
       if (r.created_by) userIds.add(r.created_by);
     }
 
     const [bankRes, profRes] = await Promise.all([
       bankIds.size
-        ? supabase.from("banks")
+        ? supabase
+            .from("banks")
             .select("id, bank_code, account_name, account_no")
             .in("id", Array.from(bankIds))
         : Promise.resolve({ data: [] as any[] }),
       userIds.size
-        ? supabase.from("profiles")
+        ? supabase
+            .from("profiles")
             .select("user_id, full_name")
             .in("user_id", Array.from(userIds))
         : Promise.resolve({ data: [] as any[] }),
@@ -98,15 +112,26 @@ export default function InterbankTransfersTable() {
     const banks = (bankRes.data as BankLite[]) ?? [];
     const profs = (profRes.data as ProfileLite[]) ?? [];
 
-    setBanksMap(Object.fromEntries(banks.map(b => [b.id, b])));
-    setProfilesMap(Object.fromEntries(profs.map(p => [p.user_id, p.full_name ?? p.user_id])));
+    setBanksMap(Object.fromEntries(banks.map((b) => [b.id, b])));
+    setProfilesMap(
+      Object.fromEntries(profs.map((p) => [p.user_id, p.full_name ?? p.user_id]))
+    );
     setRows(list);
     setTotal(count ?? list.length);
     setPage(pageToLoad);
     setLoading(false);
   };
 
-  useEffect(() => { load(1); }, []); // eslint-disable-line
+  useEffect(() => {
+    load(1);
+  }, []); // eslint-disable-line
+
+  // ✅ Enter = Submit untuk filter tanggal
+  const onDateEnter = (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    load(1);
+  };
 
   const bankLabel = (id: number) => {
     const b = banksMap[id];
@@ -120,37 +145,42 @@ export default function InterbankTransfersTable() {
       </div>
 
       <div className="overflow-auto rounded border bg-white">
-        <table className="table-grid min-w-[1100px]" style={{ borderCollapse: "collapse" }}>
+        <table
+          className="table-grid min-w-[1100px]"
+          style={{ borderCollapse: "collapse" }}
+        >
           <thead>
             <tr className="filters">
-              {/* ID */}           <th className="w-16" />
-              {/* Bank Asal */}    <th className="w-[320px]" />
-              {/* Bank Tujuan */}  <th className="w-[320px]" />
-              {/* Amount */}       <th className="w-36" />
+              {/* ID */} <th className="w-16" />
+              {/* Bank Asal */} <th className="w-[320px]" />
+              {/* Bank Tujuan */} <th className="w-[320px]" />
+              {/* Amount */} <th className="w-36" />
               {/* Tgl (dua input di-stack) */}
               <th className="w-56">
                 <div className="flex flex-col gap-1">
                   <input
                     type="date"
                     value={fStart}
-                    onChange={(e)=>setFStart(e.target.value)}
+                    onChange={(e) => setFStart(e.target.value)}
+                    onKeyDown={onDateEnter}
                     className="border rounded px-2 py-1 w-full"
                     placeholder=", dd --- yyyy"
                   />
                   <input
                     type="date"
                     value={fFinish}
-                    onChange={(e)=>setFFinish(e.target.value)}
+                    onChange={(e) => setFFinish(e.target.value)}
+                    onKeyDown={onDateEnter}
                     className="border rounded px-2 py-1 w-full"
                     placeholder=", dd --- yyyy"
                   />
                 </div>
               </th>
-              {/* By */}          <th className="w-40" />
+              {/* By */} <th className="w-40" />
               {/* Action (Submit tepat di sini) */}
               <th className="w-24">
                 <button
-                  onClick={()=>load(1)}
+                  onClick={() => load(1)}
                   className="rounded bg-blue-600 text-white px-3 py-1 w-full"
                 >
                   Submit
@@ -171,11 +201,15 @@ export default function InterbankTransfersTable() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7}>Loading…</td></tr>
+              <tr>
+                <td colSpan={7}>Loading…</td>
+              </tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={7}>No data</td></tr>
+              <tr>
+                <td colSpan={7}>No data</td>
+              </tr>
             ) : (
-              rows.map(r => (
+              rows.map((r) => (
                 <tr key={r.id} className="align-top">
                   <td>{r.id}</td>
                   <td>{bankLabel(r.bank_from_id)}</td>
@@ -184,7 +218,10 @@ export default function InterbankTransfersTable() {
                   <td>{fmtIdDateTime(r.submitted_at)}</td>
                   <td>{profilesMap[r.created_by] ?? r.created_by}</td>
                   <td>
-                    <Link href={`/interbank_transfers/${r.id}`} className="rounded bg-gray-100 px-3 py-1 inline-block">
+                    <Link
+                      href={`/interbank_transfers/${r.id}`}
+                      className="rounded bg-gray-100 px-3 py-1 inline-block"
+                    >
                       Detail
                     </Link>
                   </td>
@@ -197,11 +234,37 @@ export default function InterbankTransfersTable() {
 
       <div className="flex justify-center">
         <nav className="inline-flex items-center gap-1 text-sm">
-          <button onClick={()=>page>1 && load(1)} disabled={page<=1} className="px-3 py-1 rounded border bg-white disabled:opacity-50">First</button>
-          <button onClick={()=>page>1 && load(page-1)} disabled={page<=1} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Previous</button>
-          <span className="px-3 py-1 rounded border bg-white">Page {page} / {Math.max(1, Math.ceil(total/50))}</span>
-          <button onClick={()=>page<totalPages && load(page+1)} disabled={page>=totalPages} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Next</button>
-          <button onClick={()=>page<totalPages && load(totalPages)} disabled={page>=totalPages} className="px-3 py-1 rounded border bg-white disabled:opacity-50">Last</button>
+          <button
+            onClick={() => page > 1 && load(1)}
+            disabled={page <= 1}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            First
+          </button>
+          <button
+            onClick={() => page > 1 && load(page - 1)}
+            disabled={page <= 1}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="px-3 py-1 rounded border bg-white">
+            Page {page} / {Math.max(1, Math.ceil(total / 50))}
+          </span>
+          <button
+            onClick={() => page < totalPages && load(page + 1)}
+            disabled={page >= totalPages}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Next
+          </button>
+          <button
+            onClick={() => page < totalPages && load(totalPages)}
+            disabled={page >= totalPages}
+            className="px-3 py-1 rounded border bg-white disabled:opacity-50"
+          >
+            Last
+          </button>
         </nav>
       </div>
     </div>
