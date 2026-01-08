@@ -24,7 +24,7 @@ function useSubmitGuard() {
   const [submitting, setSubmitting] = useState(false);
 
   const run = async <T,>(fn: () => Promise<T> | T) => {
-    if (lockRef.current) return;      // sudah terkunci → abaikan submit berikutnya
+    if (lockRef.current) return; // sudah terkunci → abaikan submit berikutnya
     lockRef.current = true;
     setSubmitting(true);
     try {
@@ -46,8 +46,8 @@ type WithdrawalRow = {
   username: string;
   amount_gross: number;
   transfer_fee_amount: number;
-  txn_at: string;          // waktu dipilih (backdate)
-  performed_at: string;    // waktu klik (real)
+  txn_at: string; // waktu dipilih (backdate)
+  performed_at: string; // waktu klik (real)
   status: "posted" | "reversed";
   created_by: string | null;
   lead?: { name: string | null } | null;
@@ -263,6 +263,13 @@ export default function WithdrawalsTable() {
     loadFilteredSummary(); // update header summary mengikuti filter
   };
 
+  // ✅ Enter handler untuk filter Lead/Username/Tanggal
+  const onFilterEnter = (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    applyFilters();
+  };
+
   // ===== Summary mengikuti filter aktif (tanpa terpengaruh pagination) =====
   const loadFilteredSummary = async () => {
     // 1) Jika filter lead name diisi → cari ID lead dulu
@@ -279,7 +286,9 @@ export default function WithdrawalsTable() {
         alert(eLead.message);
         return;
       }
-      leadIds = (leadList ?? []).map((x) => Number(x.id)).filter(Number.isFinite);
+      leadIds = (leadList ?? [])
+        .map((x) => Number(x.id))
+        .filter(Number.isFinite);
       if (leadIds.length === 0) {
         setSumFiltered(0);
         setCountFiltered(0);
@@ -290,7 +299,9 @@ export default function WithdrawalsTable() {
     }
 
     // 2) Hitung total baris yang match filter
-    let qCount = supabase.from("withdrawals").select("id", { count: "exact", head: true });
+    let qCount = supabase
+      .from("withdrawals")
+      .select("id", { count: "exact", head: true });
     if (leadIds) qCount = qCount.in("lead_id", leadIds);
     if (user) qCount = qCount.ilike("username", user);
     if (fStart) qCount = qCount.gte("txn_at", startOfDayJakartaISO(fStart));
@@ -333,9 +344,12 @@ export default function WithdrawalsTable() {
         alert(error.message);
         return;
       }
-      const list = ((data ?? []) as { amount_gross: number; username: string }[]) || [];
+      const list =
+        ((data ?? []) as { amount_gross: number; username: string }[]) || [];
       sum += list.reduce((a, b) => a + Number(b.amount_gross || 0), 0);
-      list.forEach((x) => players.add((x.username ?? "").trim().toLowerCase()));
+      list.forEach((x) =>
+        players.add((x.username ?? "").trim().toLowerCase())
+      );
       from += SUMMARY_BATCH;
     }
     setSumFiltered(sum);
@@ -377,7 +391,10 @@ export default function WithdrawalsTable() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && delOpen) {
-        if (delGuard.submitting) { e.preventDefault(); return; } // ← kunci saat submit
+        if (delGuard.submitting) {
+          e.preventDefault();
+          return;
+        } // ← kunci saat submit
         e.preventDefault();
         closeDelete();
       }
@@ -411,23 +428,20 @@ export default function WithdrawalsTable() {
     }
   };
 
-  const canPrev = page > 1;
-  const canNext = page < totalPages;
-
   const canDeleteWithdrawal =
-    role === "admin" ||
-    role === "operator" ||
-    role === "cs" ||
-    role === "cs_wd";
+    role === "admin" || role === "operator" || role === "cs" || role === "cs_wd";
 
   return (
     <div className="space-y-3">
       {/* Header summary */}
       <div className="rounded border bg-white p-3 text-sm">
         <b>Withdrawals</b>
-        {useFilteredSummary && <span className="ml-1 text-gray-500">(filtered)</span>}{" "}
+        {useFilteredSummary && (
+          <span className="ml-1 text-gray-500">(filtered)</span>
+        )}{" "}
         | {formatAmount(useFilteredSummary ? (sumFiltered ?? 0) : sumToday)} |{" "}
-        {useFilteredSummary ? (countFiltered ?? 0) : countToday} transaction{" | "}
+        {useFilteredSummary ? (countFiltered ?? 0) : countToday} transaction{" "}
+        {" | "}
         {useFilteredSummary ? (playersFiltered ?? 0) : playersToday} player
       </div>
 
@@ -445,7 +459,7 @@ export default function WithdrawalsTable() {
                   placeholder="Lead name"
                   value={fLead}
                   onChange={(e) => setFLead(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && applyFilters()}
+                  onKeyDown={onFilterEnter}
                   className="w-full border rounded px-2 py-1"
                 />
               </th>
@@ -454,7 +468,7 @@ export default function WithdrawalsTable() {
                   placeholder="Username"
                   value={fUser}
                   onChange={(e) => setFUser(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && applyFilters()}
+                  onKeyDown={onFilterEnter}
                   className="w-full border rounded px-2 py-1"
                 />
               </th>
@@ -465,18 +479,21 @@ export default function WithdrawalsTable() {
                     type="date"
                     value={fStart}
                     onChange={(e) => setFStart(e.target.value)}
+                    onKeyDown={onFilterEnter}
                     className="border rounded px-2 py-1"
                   />
                   <input
                     type="date"
                     value={fFinish}
                     onChange={(e) => setFFinish(e.target.value)}
+                    onKeyDown={onFilterEnter}
                     className="border rounded px-2 py-1"
                   />
                 </div>
               </th>
               <th></th>
               <th>
+                {/* Reversed dropdown tidak perlu Enter handler (sesuai request) */}
                 <select
                   value={fDeleted}
                   onChange={(e) => setFDeleted(e.target.value as any)}
@@ -696,7 +713,6 @@ export default function WithdrawalsTable() {
                   <tr>
                     <td>Tgl Reversal (dipilih)</td>
                     <td>
-                      {/* dikunci: tampil saja, tidak bisa diubah */}
                       {new Date(delTxnAt).toLocaleString("id-ID", {
                         timeZone: "Asia/Jakarta",
                       })}
