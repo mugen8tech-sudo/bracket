@@ -227,6 +227,11 @@ export default function BanksTable() {
   const [ttToAt, setTtToAt] = useState<string>(nowLocalDatetimeValue());
   const [ttDesc, setTtDesc] = useState<string>("");
 
+  // TT: dropdown "Bank Tujuan" (searchable)
+  const [ttBankToOpen, setTtBankToOpen] = useState(false);
+  const [ttBankToSearch, setTtBankToSearch] = useState("");
+  const [ttBankToIndex, setTtBankToIndex] = useState(0);
+
   // ====== ADJ modal ======
   const [showAdj, setShowAdj] = useState(false);
   const [adjBank, setAdjBank] = useState<BankRow | null>(null);
@@ -278,6 +283,8 @@ export default function BanksTable() {
   const pdpAmountRef = useRef<HTMLInputElement | null>(null);
   const ttAmountRef = useRef<HTMLInputElement | null>(null);
   const ttFeeRef = useRef<HTMLInputElement | null>(null);
+  const ttBankToInputRef = useRef<HTMLInputElement | null>(null);
+  const ttBankToContainerRef = useRef<HTMLDivElement | null>(null);
   const adjAmountRef = useRef<HTMLInputElement | null>(null);
   const expenseAmountRef = useRef<HTMLInputElement | null>(null);
   const expenseCategoryInputRef = useRef<HTMLInputElement | null>(null);
@@ -337,6 +344,9 @@ export default function BanksTable() {
     setTtToAt(nowLocalDatetimeValue());
     setTtBankToId("");
     setTtDesc("");
+    setTtBankToOpen(false);
+    setTtBankToSearch("");
+    setTtBankToIndex(0);
   };
 
   const closeAdj = useCallback(() => setShowAdj(false), []);
@@ -492,6 +502,23 @@ export default function BanksTable() {
       document.removeEventListener("mousedown", handler);
     };
   }, [expenseCategoryOpen]);
+
+  // Close dropdown Bank Tujuan (TT) saat klik di luar komponen
+  useEffect(() => {
+    if (!ttBankToOpen) return;
+
+    const handler = (e: MouseEvent) => {
+      const container = ttBankToContainerRef.current;
+      if (container && !container.contains(e.target as Node)) {
+        setTtBankToOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+    };
+  }, [ttBankToOpen]);
 
   // cari lead by username (untuk DP & WD), exact tanpa wildcard
   useEffect(() => {
@@ -855,6 +882,9 @@ export default function BanksTable() {
     rows.filter(
       (b) => b.is_active && (!from || b.id !== from.id)
     );
+
+  const bankOptionLabel = (b: Pick<BankRow, "bank_code" | "account_name" | "account_no">) =>
+    `[${b.bank_code}] ${b.account_name} - ${b.account_no}`;
 
   // ====== Role permissions per aksi ======
   const canSettingPotongan = role === "admin";
@@ -1946,20 +1976,138 @@ export default function BanksTable() {
                 />
               </div>
 
+
               <div>
                 <label className="block text-xs mb-1">Bank Tujuan</label>
-                <select
-                  className="border rounded px-3 py-2 w-full"
-                  value={ttBankToId ?? ""}
-                  onChange={(e) => setTtBankToId(Number(e.target.value))}
-                >
-                  <option value="">Pilih bank tujuan</option>
-                  {bankToOptions(ttBankFrom).map((b) => (
-                    <option key={b.id} value={b.id}>
-                      [{b.bank_code}] {b.account_name} - {b.account_no}
-                    </option>
-                  ))}
-                </select>
+
+                <div className="relative" ref={ttBankToContainerRef}>
+                  <button
+                    type="button"
+                    className="w-full border rounded px-3 py-2 text-left"
+                    onClick={() => {
+                      const willOpen = !ttBankToOpen;
+                      setTtBankToOpen(willOpen);
+                      if (willOpen) {
+                        setTtBankToSearch("");
+                        setTtBankToIndex(0);
+                        setTimeout(() => {
+                          ttBankToInputRef.current?.focus();
+                        }, 0);
+                      }
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className={ttBankToId === "" ? "text-gray-500" : ""}>
+                        {ttBankToId === ""
+                          ? "Pilih bank tujuan"
+                          : (() => {
+                              const sel = rows.find(
+                                (x) => x.id === Number(ttBankToId),
+                              );
+                              return sel ? bankOptionLabel(sel) : `ID ${ttBankToId}`;
+                            })()}
+                      </span>
+                      <span className="ml-2">▾</span>
+                    </div>
+                  </button>
+
+                  {ttBankToOpen && (
+                    <div className="absolute z-10 mt-1 w-full border bg-white rounded shadow">
+                      <div className="p-2 border-b">
+                        <input
+                          ref={ttBankToInputRef}
+                          className="border rounded px-3 py-2 w-full"
+                          placeholder="search bank tujuan…"
+                          value={ttBankToSearch}
+                          onChange={(e) => {
+                            setTtBankToSearch(e.target.value);
+                            setTtBankToIndex(0);
+                          }}
+                          onKeyDown={(e) => {
+                            e.stopPropagation();
+
+                            const kw = ttBankToSearch.trim().toLowerCase();
+                            const allItems = bankToOptions(ttBankFrom);
+                            const filtered = kw
+                              ? allItems.filter((b) =>
+                                  bankOptionLabel(b).toLowerCase().includes(kw),
+                                )
+                              : allItems;
+
+                            if (e.key === "ArrowDown" && filtered.length > 0) {
+                              e.preventDefault();
+                              setTtBankToIndex((i) =>
+                                Math.min(i + 1, filtered.length - 1),
+                              );
+                              return;
+                            }
+
+                            if (e.key === "ArrowUp" && filtered.length > 0) {
+                              e.preventDefault();
+                              setTtBankToIndex((i) => Math.max(i - 1, 0));
+                              return;
+                            }
+
+                            if (e.key === "Enter" && filtered.length > 0) {
+                              e.preventDefault();
+                              const pick =
+                                filtered[
+                                  Math.min(ttBankToIndex, filtered.length - 1)
+                                ];
+                              if (pick) {
+                                setTtBankToId(pick.id);
+                              }
+                              setTtBankToOpen(false);
+                              return;
+                            }
+
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              setTtBankToOpen(false);
+                            }
+                          }}
+                        />
+                      </div>
+
+                      <div className="max-h-64 overflow-auto">
+                        {(() => {
+                          const kw = ttBankToSearch.trim().toLowerCase();
+                          const allItems = bankToOptions(ttBankFrom);
+                          const filtered = kw
+                            ? allItems.filter((b) =>
+                                bankOptionLabel(b).toLowerCase().includes(kw),
+                              )
+                            : allItems;
+
+                          if (filtered.length === 0) {
+                            return (
+                              <div className="px-3 py-2 text-sm text-gray-500">
+                                Tidak ada bank cocok
+                              </div>
+                            );
+                          }
+
+                          return filtered.map((b, idx) => (
+                            <button
+                              key={b.id}
+                              type="button"
+                              onClick={() => {
+                                setTtBankToId(b.id);
+                                setTtBankToOpen(false);
+                              }}
+                              onMouseEnter={() => setTtBankToIndex(idx)}
+                              className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 ${
+                                idx === ttBankToIndex ? "bg-blue-50" : ""
+                              }`}
+                            >
+                              {bankOptionLabel(b)}
+                            </button>
+                          ));
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div>
