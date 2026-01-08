@@ -262,6 +262,13 @@ export default function BankExpensesTable() {
     return b ? `[${b.bank_code}] ${b.account_name} - ${b.account_no}` : "[]";
   };
 
+  // ✅ Enter = Submit untuk filter tanggal (Start/Finish)
+  const onDateEnter = (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    load(1);
+  };
+
   // ===== Guard render =====
   if (authorized === "loading") {
     return <div className="p-6">Loading…</div>;
@@ -320,6 +327,7 @@ export default function BankExpensesTable() {
                     type="date"
                     value={fStart}
                     onChange={(e) => setFStart(e.target.value)}
+                    onKeyDown={onDateEnter}
                     className="border rounded px-2 py-1 w-full"
                     placeholder=", dd --- yyyy"
                   />
@@ -327,6 +335,7 @@ export default function BankExpensesTable() {
                     type="date"
                     value={fFinish}
                     onChange={(e) => setFFinish(e.target.value)}
+                    onKeyDown={onDateEnter}
                     className="border rounded px-2 py-1 w-full"
                     placeholder=", dd --- yyyy"
                   />
