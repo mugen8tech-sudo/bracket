@@ -18,7 +18,12 @@ type AdjRow = {
   mutation_id: number;
 };
 
-type BankLite = { id: number; bank_code: string; account_name: string; account_no: string };
+type BankLite = {
+  id: number;
+  bank_code: string;
+  account_name: string;
+  account_no: string;
+};
 type ProfileLite = { user_id: string; full_name: string | null };
 
 const PAGE_SIZE = 25;
@@ -60,7 +65,9 @@ export default function BankAdjustmentsTable() {
   const supabase = supabaseBrowser();
 
   // ===== Guard: hanya Admin & Operator =====
-  const [authorized, setAuthorized] = useState<"loading" | "ok" | "no">("loading");
+  const [authorized, setAuthorized] = useState<"loading" | "ok" | "no">(
+    "loading"
+  );
   const [myRole, setMyRole] = useState<AnyRole>("other");
 
   const [rows, setRows] = useState<AdjRow[]>([]);
@@ -155,17 +162,15 @@ export default function BankAdjustmentsTable() {
     ]);
 
     setBanks(
-      Object.fromEntries(
-        ((bankRes.data as BankLite[]) ?? []).map((b) => [b.id, b]),
-      ),
+      Object.fromEntries(((bankRes.data as BankLite[]) ?? []).map((b) => [b.id, b]))
     );
     setProfiles(
       Object.fromEntries(
         ((profRes.data as ProfileLite[]) ?? []).map((p) => [
           p.user_id,
           p.full_name ?? p.user_id,
-        ]),
-      ),
+        ])
+      )
     );
 
     setRows(list);
@@ -185,6 +190,13 @@ export default function BankAdjustmentsTable() {
   const bankLabel = (id: number) => {
     const b = banks[id];
     return b ? `[${b.bank_code}] ${b.account_name} - ${b.account_no}` : "[]";
+  };
+
+  // ✅ Enter = Submit untuk filter tanggal
+  const onDateEnter = (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    load(1);
   };
 
   // ===== Guard render =====
@@ -226,6 +238,7 @@ export default function BankAdjustmentsTable() {
                     type="date"
                     value={fStart}
                     onChange={(e) => setFStart(e.target.value)}
+                    onKeyDown={onDateEnter}
                     className="border rounded px-2 py-1 w-full"
                     placeholder=", dd --- yyyy"
                   />
@@ -233,6 +246,7 @@ export default function BankAdjustmentsTable() {
                     type="date"
                     value={fFinish}
                     onChange={(e) => setFFinish(e.target.value)}
+                    onKeyDown={onDateEnter}
                     className="border rounded px-2 py-1 w-full"
                     placeholder=", dd --- yyyy"
                   />
