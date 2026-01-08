@@ -159,13 +159,10 @@ function parsePdpTimestamp(desc?: string | null): Date | null {
 }
 
 // Ambil hanya "alasan" dari description reversal PDP.
-// Jika desc generik (mis. "Reverse Pending Deposit"), kosongkan.
-// Jika berisi alasan (mis. "SALAH INPUT" atau "Alasan: <teks>"), tampilkan alasannya saja.
 function reasonFromReversalPdpDesc(desc?: string | null) {
   if (!desc) return "";
   const raw = desc.trim();
   const low = raw.toLowerCase();
-  // buang frasa generik
   const generics = [
     "reverse pending deposit",
     "reversal pending deposit",
@@ -175,19 +172,15 @@ function reasonFromReversalPdpDesc(desc?: string | null) {
     "reversal pending depo",
   ];
   if (generics.some((g) => low.includes(g))) {
-    // jika ada "|", ambil sisi kanan sebagai alasan
     const afterPipe = raw.split("|")[1]?.trim();
     if (afterPipe) return afterPipe;
-    // coba pola "alasan: xxx" / "reason: xxx"
     const m = raw.match(/(?:alasan|reason)\s*:\s*(.+)$/i);
     return m ? m[1].trim() : "";
   }
-  // kalau bukan frasa generik (contoh "SALAH INPUT"), anggap itu alasan
   return raw;
 }
 
 // Pisahkan deskripsi settlement: "<note> | target: ..."
-// return { note: "TES AKURAN", target: "target: OTHER TRC 20 / 123..." }
 function splitSettlementMeta(raw?: string | null) {
   const s = (raw ?? "").trim();
   if (!s) return { note: "", target: "" };
@@ -283,42 +276,38 @@ export default function BankMutationsTable() {
 
   // query utama
   const load = async (pageToLoad = page) => {
-      setLoading(true);
+    setLoading(true);
 
-      // ==== Pre-calc: keyword Desc & BANK_EXPENSE IDs (public.bank_expenses.description) ====
-      const descInput = fDesc.trim();
-      const descKeywords = descInput
-        ? descInput.split(/\s+/).filter(Boolean)
-        : [];
+    // ==== Pre-calc: keyword Desc & BANK_EXPENSE IDs (public.bank_expenses.description) ====
+    const descInput = fDesc.trim();
+    const descKeywords = descInput ? descInput.split(/\s+/).filter(Boolean) : [];
 
-      let bankExpenseIdsForDesc: number[] = [];
+    let bankExpenseIdsForDesc: number[] = [];
 
-      if (descKeywords.length) {
-        let qExp = supabase
-          .from("bank_expenses")
-          .select("mutation_id");
+    if (descKeywords.length) {
+      let qExp = supabase.from("bank_expenses").select("mutation_id");
 
-        for (const kw of descKeywords) {
-          qExp = qExp.ilike("description", `%${kw}%`);
-        }
-
-        const { data: expRows, error: expErr } = await qExp;
-        if (expErr) {
-          setLoading(false);
-          alert(expErr.message);
-          return;
-        }
-        const expList = (expRows as any[]) ?? [];
-        bankExpenseIdsForDesc = expList
-          .map((row: any) => row.mutation_id as number | null)
-          .filter((id): id is number => typeof id === "number");
+      for (const kw of descKeywords) {
+        qExp = qExp.ilike("description", `%${kw}%`);
       }
 
-      let q = supabase
-        .from("bank_mutations")
-        .select("*", { count: "exact" })
-        .order("performed_at", { ascending: false })
-        .order("id", { ascending: false }); // tie-breaker stabil
+      const { data: expRows, error: expErr } = await qExp;
+      if (expErr) {
+        setLoading(false);
+        alert(expErr.message);
+        return;
+      }
+      const expList = (expRows as any[]) ?? [];
+      bankExpenseIdsForDesc = expList
+        .map((row: any) => row.mutation_id as number | null)
+        .filter((id): id is number => typeof id === "number");
+    }
+
+    let q = supabase
+      .from("bank_mutations")
+      .select("*", { count: "exact" })
+      .order("performed_at", { ascending: false })
+      .order("id", { ascending: false }); // tie-breaker stabil
 
     // Filter Waktu Click (REAL)
     if (fStart) q = q.gte("performed_at", startOfDayJakartaISO(fStart));
@@ -398,19 +387,15 @@ export default function BankMutationsTable() {
 
       for (const r of list) {
         const isFee =
-          r.kind === "EXPENSE" &&
-          isTransferFee(r.description) &&
-          !!r.deposit_id;
+          r.kind === "EXPENSE" && isTransferFee(r.description) && !!r.deposit_id;
 
         if (isFee) {
-          // Jika pasangan (WD/REV_WD) ada di halaman, fee akan disisipkan di sana (skip di sini)
           if (
             (r.amount < 0 && wdRefs.has(r.deposit_id!)) ||
             (r.amount >= 0 && revWdRefs.has(r.deposit_id!))
           ) {
             continue;
           }
-          // Jika pasangannya tidak ada di halaman, tampilkan fee apa adanya
           if (!usedFeeIds.has(r.id)) {
             ordered.push(r);
             usedFeeIds.add(r.id);
@@ -418,7 +403,6 @@ export default function BankMutationsTable() {
           continue;
         }
 
-        // WD → taruh FEE dulu, baru WD
         if (r.kind === "WITHDRAWAL" && r.deposit_id) {
           const fee = feeNegByRef.get(r.deposit_id);
           if (fee && !usedFeeIds.has(fee.id)) {
@@ -429,7 +413,6 @@ export default function BankMutationsTable() {
           continue;
         }
 
-        // REVERSAL_WD → taruh FEE REVERSAL dulu, baru REV_WD
         if (r.kind === "REVERSAL_WITHDRAWAL" && r.deposit_id) {
           const fee = feePosByRef.get(r.deposit_id);
           if (fee && !usedFeeIds.has(fee.id)) {
@@ -440,7 +423,6 @@ export default function BankMutationsTable() {
           continue;
         }
 
-        // selain itu, render biasa
         ordered.push(r);
       }
 
@@ -451,11 +433,9 @@ export default function BankMutationsTable() {
     const pdpRows = list.filter((r) => r.kind === "PENDING_DEPOSIT");
     const revCandidates = list.filter(
       (r) =>
-        r.kind === "REVERSAL_PENDING_DEPOSIT" ||
-        r.kind === "REVERSAL_DEPOSIT",
+        r.kind === "REVERSAL_PENDING_DEPOSIT" || r.kind === "REVERSAL_DEPOSIT",
     );
 
-    // bucket PENDING_DEPOSIT per (bank_id, |amount|), urut waktu naik
     const pdpBuckets = new Map<string, BankMutationRow[]>();
     for (const p of pdpRows) {
       const key = `${p.bank_id}|${Math.abs(p.amount)}`;
@@ -471,7 +451,6 @@ export default function BankMutationsTable() {
       );
     }
 
-    // cari pasangan PDP untuk tiap kandidat reversal
     const tmpRevMap: Record<number, string> = {};
     for (const rv of revCandidates) {
       const key = `${rv.bank_id}|${Math.abs(rv.amount)}`;
@@ -479,7 +458,6 @@ export default function BankMutationsTable() {
       if (!arr.length) continue;
       const tRv = new Date(rv.performed_at).getTime();
       let picked: BankMutationRow | undefined;
-      // ambil PDP terakhir yang waktunya <= waktu reversal
       for (let i = arr.length - 1; i >= 0; i--) {
         if (new Date(arr[i].performed_at).getTime() <= tRv) {
           picked = arr[i];
@@ -490,7 +468,6 @@ export default function BankMutationsTable() {
     }
     setRevPdpTimeMap(tmpRevMap);
 
-    // Jika user memilih kategori "Pending DP", saring reversal deposit yang bukan reversal PDP
     if (fCat === "PENDING_DP") {
       list = list.filter(
         (r) =>
@@ -501,9 +478,7 @@ export default function BankMutationsTable() {
     }
 
     // === ⬇️ Tambahan: penataan grup TT (OUT → Fee → IN ketika ascending) ===
-    // Ambil semua ID mutasi di halaman
     const idsOnPage = list.map((r) => r.id);
-    // Cari interbank_transfers yang mereferensikan salah satu ID tsb
     let ttRows: {
       id: number;
       mutation_out_id: number;
@@ -522,7 +497,6 @@ export default function BankMutationsTable() {
           .in("mutation_in_id", idsOnPage),
       ]);
       ttRows = [...((qOut.data as any[]) ?? []), ...((qIn.data as any[]) ?? [])];
-      // de-dupe by id
       const seen = new Set<number>();
       ttRows = ttRows.filter((r) =>
         seen.has(r.id) ? false : (seen.add(r.id), true),
@@ -530,7 +504,6 @@ export default function BankMutationsTable() {
     }
 
     if (ttRows.length) {
-      // peta: mutation_id -> { group info }
       const byMutId = new Map<
         number,
         { outId: number; inId: number; feeId: number | null }
@@ -554,15 +527,10 @@ export default function BankMutationsTable() {
           });
       }
 
-      // index cepat id -> row
-      const rowById = new Map<number, BankMutationRow>(
-        list.map((r) => [r.id, r]),
-      );
+      const rowById = new Map<number, BankMutationRow>(list.map((r) => [r.id, r]));
       const used = new Set<number>();
       const ordered: BankMutationRow[] = [];
 
-      // Dengan urut default DESC (performed_at, id), kita jaga konsistensi global:
-      // tampilkan IN → (Fee) → OUT. Saat user melihat urut ASC, hasilnya otomatis OUT → Fee → IN.
       for (const r of list) {
         if (used.has(r.id)) continue;
 
@@ -573,10 +541,7 @@ export default function BankMutationsTable() {
           continue;
         }
 
-        // urut DESC: IN, Fee(optional), OUT
-        const ids = [grp.inId, grp.feeId ?? undefined, grp.outId].filter(
-          Boolean,
-        ) as number[];
+        const ids = [grp.inId, grp.feeId ?? undefined, grp.outId].filter(Boolean) as number[];
         for (const id of ids) {
           const it = rowById.get(id);
           if (it && !used.has(id)) {
@@ -590,12 +555,8 @@ export default function BankMutationsTable() {
     }
 
     // === Ambil deskripsi TT yang dimasukkan user (untuk kolom Desc)
-    const ttOutIds = list
-      .filter((r) => r.kind === "INTERBANK_OUT")
-      .map((r) => r.id);
-    const ttInIds = list
-      .filter((r) => r.kind === "INTERBANK_IN")
-      .map((r) => r.id);
+    const ttOutIds = list.filter((r) => r.kind === "INTERBANK_OUT").map((r) => r.id);
+    const ttInIds = list.filter((r) => r.kind === "INTERBANK_IN").map((r) => r.id);
     const ttFeeIds = list
       .filter((r) => r.kind === "EXPENSE" && isTtFee(r.description))
       .map((r) => r.id);
@@ -638,9 +599,7 @@ export default function BankMutationsTable() {
     }
 
     // === Deskripsi khusus BANK_EXPENSE (operasional)
-    const beIds = list
-      .filter((r) => r.kind === "BANK_EXPENSE")
-      .map((r) => r.id);
+    const beIds = list.filter((r) => r.kind === "BANK_EXPENSE").map((r) => r.id);
     if (beIds.length) {
       const { data } = await supabase
         .from("bank_expenses")
@@ -656,9 +615,7 @@ export default function BankMutationsTable() {
     }
 
     // === Deskripsi Settlement (Akuran)
-    const stIds = list
-      .filter((r) => r.kind === "SETTLEMENT")
-      .map((r) => r.id);
+    const stIds = list.filter((r) => r.kind === "SETTLEMENT").map((r) => r.id);
     if (stIds.length) {
       const { data } = await supabase
         .from("settlements")
@@ -674,9 +631,7 @@ export default function BankMutationsTable() {
     }
 
     // === Deskripsi Pending Deposit
-    const pdpMutIds = list
-      .filter((r) => r.kind === "PENDING_DEPOSIT")
-      .map((r) => r.id);
+    const pdpMutIds = list.filter((r) => r.kind === "PENDING_DEPOSIT").map((r) => r.id);
     if (pdpMutIds.length) {
       const { data } = await supabase
         .from("pending_deposits")
@@ -692,9 +647,7 @@ export default function BankMutationsTable() {
     }
 
     // === Deskripsi Adjustment
-    const adjMutIds = list
-      .filter((r) => r.kind === "ADJUSTMENT")
-      .map((r) => r.id);
+    const adjMutIds = list.filter((r) => r.kind === "ADJUSTMENT").map((r) => r.id);
     if (adjMutIds.length) {
       const { data } = await supabase
         .from("bank_adjustments")
@@ -713,7 +666,6 @@ export default function BankMutationsTable() {
     setTotal(count ?? list.length);
     setPage(pageToLoad);
 
-    // lookups batch: deposits + withdrawals + creator + lead
     const refIds = Array.from(
       new Set(
         list
@@ -722,11 +674,7 @@ export default function BankMutationsTable() {
       ),
     );
     const creatorIds = Array.from(
-      new Set(
-        list
-          .map((r) => r.created_by)
-          .filter((v): v is string => !!v),
-      ),
+      new Set(list.map((r) => r.created_by).filter((v): v is string => !!v)),
     );
 
     const [depRes, wdRes, profRes] = await Promise.all([
@@ -757,18 +705,15 @@ export default function BankMutationsTable() {
 
     const leadIds = Array.from(
       new Set(
-        [
-          ...depList.map((d) => d.lead_id),
-          ...wdList.map((w) => w.lead_id),
-        ].filter((v): v is number => !!v),
+        [...depList.map((d) => d.lead_id), ...wdList.map((w) => w.lead_id)].filter(
+          (v): v is number => !!v,
+        ),
       ),
     );
     const leadList =
       leadIds.length > 0
-        ? (((await supabase
-            .from("leads")
-            .select("id, name")
-            .in("id", leadIds)).data as LeadLite[]) ?? [])
+        ? (((await supabase.from("leads").select("id, name").in("id", leadIds))
+            .data as LeadLite[]) ?? [])
         : [];
     setLeadMap(Object.fromEntries(leadList.map((l) => [l.id, l])));
 
@@ -783,17 +728,22 @@ export default function BankMutationsTable() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ✅ Enter = submit untuk filter: Cari ID, Tanggal, Desc
+  const onFilterEnter = (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    load(1);
+  };
+
   const bankLabel = (id: number) => {
     const b = banks.find((x) => x.id === id);
     if (!b) return "[]";
     return `[${b.bank_code}] ${b.account_name} - ${b.account_no}`;
   };
 
-  // helper: apakah baris ini adalah reversal dari Pending DP?
   const isReversalOfPDP = (r: BankMutationRow) =>
     r.kind === "REVERSAL_PENDING_DEPOSIT" || !!revPdpTimeMap[r.id];
 
-  // helper: untuk pewarnaan Amount (merah kalau REVERSAL)
   const isReversalRowForAmount = (r: BankMutationRow) => {
     if (isReversalOfPDP(r)) return true;
     if (
@@ -803,11 +753,9 @@ export default function BankMutationsTable() {
     )
       return true;
 
-    // fallback: kalau description mengandung kata "reversal" (mis. reversal fee)
     return (r.description ?? "").toLowerCase().includes("reversal");
   };
 
-  // ===== Cat kolom
   const catLabelForRow = (r: BankMutationRow): string => {
     if (r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL")
       return "WD";
@@ -823,7 +771,6 @@ export default function BankMutationsTable() {
     return "-";
   };
 
-  // ===== Info tambahan (username/lead + wording)
   const extraInfo = (r: BankMutationRow): string => {
     if (r.kind === "SETTLEMENT") {
       const raw = settleDescMap[r.id] ?? r.description ?? "";
@@ -833,9 +780,7 @@ export default function BankMutationsTable() {
     if (r.kind === "DEPOSIT") {
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
       const leadName = d?.lead_id ? leadMap[d.lead_id!]?.name ?? "" : "";
-      return `Depo dari ${d?.username ?? "-"}${
-        leadName ? " / " + leadName : ""
-      }`;
+      return `Depo dari ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
     }
     if (isReversalOfPDP(r)) {
       return "Reversal Pending DP";
@@ -843,50 +788,35 @@ export default function BankMutationsTable() {
     if (r.kind === "REVERSAL_DEPOSIT") {
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
       const leadName = d?.lead_id ? leadMap[d.lead_id!]?.name ?? "" : "";
-      return `Reversal Depo dari ${d?.username ?? "-"}${
-        leadName ? " / " + leadName : ""
-      }`;
+      return `Reversal Depo dari ${d?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
     }
     if (r.kind === "WITHDRAWAL") {
       const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
       const leadName = w?.lead_id ? leadMap[w.lead_id!]?.name ?? "" : "";
-      return `WD ke ${w?.username ?? "-"}${
-        leadName ? " / " + leadName : ""
-      }`;
+      return `WD ke ${w?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
     }
     if (r.kind === "REVERSAL_WITHDRAWAL") {
       const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
       const leadName = w?.lead_id ? leadMap[w.lead_id!]?.name ?? "" : "";
-      return `Reversal WD dari ${w?.username ?? "-"}${
-        leadName ? " / " + leadName : ""
-      }`;
+      return `Reversal WD dari ${w?.username ?? "-"}${leadName ? " / " + leadName : ""}`;
     }
     if (r.kind === "EXPENSE" && isTransferFee(r.description)) {
       const s = (r.description || "").toLowerCase();
 
-      // WD fee (tetap)
       if (s.includes("wd")) {
         const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
-        const base = s.includes("reversal")
-          ? "Reversal Fee WD dari"
-          : "Fee WD dari";
+        const base = s.includes("reversal") ? "Reversal Fee WD dari" : "Fee WD dari";
         return `${base} ${w?.username ?? "-"}`;
       }
 
-      // Fee Akuran
       if (/\bsettlement\b/i.test(s)) {
         const b = banks.find((x) => x.id === r.bank_id);
-        return `Fee Akuran dari ${
-          b ? `[${b.bank_code}] ${b.account_name}` : "-"
-        }`;
+        return `Fee Akuran dari ${b ? `[${b.bank_code}] ${b.account_name}` : "-"}`;
       }
 
-      // Fee Sesama CM (TT)
       if (isTtFee(r.description)) {
         const b = banks.find((x) => x.id === r.bank_id);
-        return `Fee Sesama CM dari ${
-          b ? `[${b.bank_code}] ${b.account_name}` : "-"
-        }`;
+        return `Fee Sesama CM dari ${b ? `[${b.bank_code}] ${b.account_name}` : "-"}`;
       }
 
       return "Biaya Transfer";
@@ -894,32 +824,24 @@ export default function BankMutationsTable() {
     return r.description ?? "-";
   };
 
-  // ===== Tag [REVERSAL-<performed_at_asli>] khusus baris reversal
   const reversalTag = (r: BankMutationRow) => {
     if (isReversalOfPDP(r)) {
-      const madeAt = revPdpTimeMap[r.id]
-        ? formatIdDateTime(revPdpTimeMap[r.id])
-        : "-";
+      const madeAt = revPdpTimeMap[r.id] ? formatIdDateTime(revPdpTimeMap[r.id]) : "-";
       return `[REVERSAL-${madeAt}]`;
     }
     if (r.kind === "REVERSAL_DEPOSIT") {
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
-      const madeAt = d?.performed_at
-        ? formatIdDateTime(d.performed_at)
-        : "-";
+      const madeAt = d?.performed_at ? formatIdDateTime(d.performed_at) : "-";
       return `[REVERSAL-${madeAt}]`;
     }
     if (r.kind === "REVERSAL_WITHDRAWAL") {
       const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
-      const madeAt = w?.performed_at
-        ? formatIdDateTime(w.performed_at)
-        : "-";
+      const madeAt = w?.performed_at ? formatIdDateTime(w.performed_at) : "-";
       return `[REVERSAL-${madeAt}]`;
     }
     return null;
   };
 
-  // Tag PDP (untuk DEPOSIT hasil assign) → format dd/mm/yyyy hh.mm.ss
   const pdpTag = (r: BankMutationRow) => {
     if (r.kind !== "DEPOSIT") return null;
     const d = parsePdpTimestamp(r.description);
@@ -927,26 +849,19 @@ export default function BankMutationsTable() {
     return `[PDP-${formatIdDateTime(d)}]`;
   };
 
-  // Desc dasar:
-  // - DEPOSIT hasil assign PDP → kosong
-  // - Reversal PDP → hanya "alasan"
-  // - lainnya → description apa adanya
   const descForRow = (r: BankMutationRow, pdpTagStr: string | null) => {
     if (r.kind === "DEPOSIT" && pdpTagStr) return "";
     if (isReversalOfPDP(r)) return reasonFromReversalPdpDesc(r.description);
     return r.description ?? "";
   };
 
-  // Effective description untuk kolom "Desc" dengan prioritas 7 tabel → fallback bank_mutations
   const displayDescForRow = (r: BankMutationRow, pdpTagStr: string | null) => {
-    // 1) Settlement / Akuran → note dari settlements
     if (r.kind === "SETTLEMENT") {
       const raw = settleDescMap[r.id] ?? r.description ?? "";
       const { note } = splitSettlementMeta(raw);
       return note;
     }
 
-    // 2) Interbank & Fee TT → desc dari interbank_transfers, fallback ke generic
     if (
       r.kind === "INTERBANK_OUT" ||
       r.kind === "INTERBANK_IN" ||
@@ -957,49 +872,37 @@ export default function BankMutationsTable() {
       return descForRow(r, pdpTagStr);
     }
 
-    // 3) Bank Expense operasional → bank_expenses.description
     if (r.kind === "BANK_EXPENSE") {
       const fromExp = expDescMap[r.id];
       if (fromExp) return fromExp;
       return descForRow(r, pdpTagStr);
     }
 
-    // 4) Pending Deposit → pending_deposits.description
-    if (
-      r.kind === "PENDING_DEPOSIT" ||
-      r.kind === "REVERSAL_PENDING_DEPOSIT"
-    ) {
+    if (r.kind === "PENDING_DEPOSIT" || r.kind === "REVERSAL_PENDING_DEPOSIT") {
       const fromPdp = pdpDescMap[r.id];
       if (fromPdp) return fromPdp;
       return descForRow(r, pdpTagStr);
     }
 
-    // 5) Adjustment → bank_adjustments.description
     if (r.kind === "ADJUSTMENT") {
       const fromAdj = adjDescMap[r.id];
       if (fromAdj) return fromAdj;
       return descForRow(r, pdpTagStr);
     }
 
-    // 6) Deposit / Reversal Deposit → deposits.description
     if (r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") {
-      if (r.kind === "DEPOSIT" && pdpTagStr) {
-        // DEPOSIT hasil assign PDP tetap kosong (info sudah di tag)
-        return "";
-      }
+      if (r.kind === "DEPOSIT" && pdpTagStr) return "";
       const d = r.deposit_id ? depositMap[r.deposit_id] : undefined;
       if (d?.description) return d.description;
       return descForRow(r, pdpTagStr);
     }
 
-    // 7) Withdrawal / Reversal Withdrawal → withdrawals.description
     if (r.kind === "WITHDRAWAL" || r.kind === "REVERSAL_WITHDRAWAL") {
       const w = r.deposit_id ? withdrawalMap[r.deposit_id] : undefined;
       if (w?.description) return w.description;
       return descForRow(r, pdpTagStr);
     }
 
-    // fallback default
     return descForRow(r, pdpTagStr);
   };
 
@@ -1025,6 +928,7 @@ export default function BankMutationsTable() {
                 <input
                   value={fId}
                   onChange={(e) => setFId(e.target.value)}
+                  onKeyDown={onFilterEnter}
                   className="w-full border rounded px-2 py-1"
                   placeholder="ID"
                 />
@@ -1037,6 +941,7 @@ export default function BankMutationsTable() {
                     type="date"
                     value={fStart}
                     onChange={(e) => setFStart(e.target.value)}
+                    onKeyDown={onFilterEnter}
                     className="border rounded px-2 py-1"
                     aria-label="Start (Click)"
                   />
@@ -1044,6 +949,7 @@ export default function BankMutationsTable() {
                     type="date"
                     value={fFinish}
                     onChange={(e) => setFFinish(e.target.value)}
+                    onKeyDown={onFilterEnter}
                     className="border rounded px-2 py-1"
                     aria-label="Finish (Click)"
                   />
@@ -1070,11 +976,7 @@ export default function BankMutationsTable() {
 
               {/* Bank */}
               <th className="min-w-[320px]">
-                <div
-                  className="relative"
-                  ref={bankFilterContainerRef}
-                >
-                  {/* Tombol utama */}
+                <div className="relative" ref={bankFilterContainerRef}>
                   <button
                     type="button"
                     className="w-full border rounded px-2 py-1 text-left"
@@ -1092,18 +994,14 @@ export default function BankMutationsTable() {
                   >
                     <div className="flex items-center justify-between">
                       <span className={fBankId === "" ? "text-gray-500" : ""}>
-                        {fBankId === ""
-                          ? "All"
-                          : bankLabel(Number(fBankId))}
+                        {fBankId === "" ? "All" : bankLabel(Number(fBankId))}
                       </span>
                       <span className="ml-2">▾</span>
                     </div>
                   </button>
 
-                  {/* Panel dropdown */}
                   {fBankOpen && (
                     <div className="absolute z-10 mt-1 w-full border bg-white rounded shadow">
-                      {/* Search di dalam dropdown */}
                       <div className="p-2 border-b">
                         <input
                           ref={bankFilterInputRef}
@@ -1112,60 +1010,48 @@ export default function BankMutationsTable() {
                           value={fBankSearch}
                           onChange={(e) => {
                             setFBankSearch(e.target.value);
-                            setFBankIndex(0); // highlight ke item pertama
+                            setFBankIndex(0);
                           }}
                           onKeyDown={(e) => {
                             e.stopPropagation();
 
                             const kw = fBankSearch.trim().toLowerCase();
-                            const allItems: { id: number | ""; label: string }[] =
-                              [
-                                { id: "", label: "All" },
-                                ...banks.map((b) => ({
-                                  id: b.id,
-                                  label: `[${b.bank_code}] ${b.account_name} - ${b.account_no}${
-                                    !b.is_active ? " (OFF)" : ""
-                                  }`,
-                                })),
-                              ];
+                            const allItems: { id: number | ""; label: string }[] = [
+                              { id: "", label: "All" },
+                              ...banks.map((b) => ({
+                                id: b.id,
+                                label: `[${b.bank_code}] ${b.account_name} - ${b.account_no}${
+                                  !b.is_active ? " (OFF)" : ""
+                                }`,
+                              })),
+                            ];
 
                             const filtered = kw
                               ? allItems.filter(
                                   (it) =>
-                                    it.id !== "" && // kalau sedang search, jangan tampilkan All
+                                    it.id !== "" &&
                                     it.label.toLowerCase().includes(kw),
                                 )
                               : allItems;
 
                             if (e.key === "ArrowDown" && filtered.length > 0) {
                               e.preventDefault();
-                              setFBankIndex((i) =>
-                                Math.min(i + 1, filtered.length - 1),
-                              );
+                              setFBankIndex((i) => Math.min(i + 1, filtered.length - 1));
                               return;
                             }
 
                             if (e.key === "ArrowUp" && filtered.length > 0) {
                               e.preventDefault();
-                              setFBankIndex((i) =>
-                                Math.max(i - 1, 0),
-                              );
+                              setFBankIndex((i) => Math.max(i - 1, 0));
                               return;
                             }
 
                             if (e.key === "Enter" && filtered.length > 0) {
                               e.preventDefault();
                               const pick =
-                                filtered[
-                                  Math.min(
-                                    fBankIndex,
-                                    filtered.length - 1,
-                                  )
-                                ];
+                                filtered[Math.min(fBankIndex, filtered.length - 1)];
                               if (pick) {
-                                setFBankId(
-                                  pick.id === "" ? "" : Number(pick.id),
-                                );
+                                setFBankId(pick.id === "" ? "" : Number(pick.id));
                               }
                               setFBankOpen(false);
                               return;
@@ -1179,25 +1065,23 @@ export default function BankMutationsTable() {
                         />
                       </div>
 
-                      {/* List bank */}
                       <div className="max-h-64 overflow-auto">
                         {(() => {
                           const kw = fBankSearch.trim().toLowerCase();
-                          const allItems: { id: number | ""; label: string }[] =
-                            [
-                              { id: "", label: "All" },
-                              ...banks.map((b) => ({
-                                id: b.id,
-                                label: `[${b.bank_code}] ${b.account_name} - ${b.account_no}${
-                                  !b.is_active ? " (OFF)" : ""
-                                }`,
-                              })),
-                            ];
+                          const allItems: { id: number | ""; label: string }[] = [
+                            { id: "", label: "All" },
+                            ...banks.map((b) => ({
+                              id: b.id,
+                              label: `[${b.bank_code}] ${b.account_name} - ${b.account_no}${
+                                !b.is_active ? " (OFF)" : ""
+                              }`,
+                            })),
+                          ];
 
                           const filtered = kw
                             ? allItems.filter(
                                 (it) =>
-                                  it.id !== "" && // sembunyikan All saat search aktif
+                                  it.id !== "" &&
                                   it.label.toLowerCase().includes(kw),
                               )
                             : allItems;
@@ -1215,9 +1099,7 @@ export default function BankMutationsTable() {
                               key={`${item.id || "all"}`}
                               type="button"
                               onClick={() => {
-                                setFBankId(
-                                  item.id === "" ? "" : Number(item.id),
-                                );
+                                setFBankId(item.id === "" ? "" : Number(item.id));
                                 setFBankOpen(false);
                               }}
                               onMouseEnter={() => setFBankIndex(idx)}
@@ -1240,12 +1122,12 @@ export default function BankMutationsTable() {
                 <input
                   value={fDesc}
                   onChange={(e) => setFDesc(e.target.value)}
+                  onKeyDown={onFilterEnter}
                   className="w-full border rounded px-2 py-1"
                   placeholder="Desc"
                 />
               </th>
 
-              {/* Amount / Start / Finish: no filters */}
               {/* Submit */}
               <th className="w-28">
                 <button
@@ -1287,9 +1169,7 @@ export default function BankMutationsTable() {
             ) : (
               rows.map((r) => {
                 const creator =
-                  (r.created_by && creatorMap[r.created_by]) ||
-                  r.created_by ||
-                  "-";
+                  (r.created_by && creatorMap[r.created_by]) || r.created_by || "-";
                 const revTag = reversalTag(r);
                 const pdpTagStr = pdpTag(r);
                 const tag = revTag ?? pdpTagStr;
@@ -1307,24 +1187,20 @@ export default function BankMutationsTable() {
                         <span className="text-gray-500">{tag}</span>
                       </div>
                       <div className="my-1 h-px bg-gray-200" />
-                      <div className="text-sm text-gray-700">
-                        {extraInfo(r)}
-                      </div>
+                      <div className="text-sm text-gray-700">{extraInfo(r)}</div>
                     </td>
-                    <td className="whitespace-normal break-words">
-                      {descDisplay}
-                    </td>
+                    <td className="whitespace-normal break-words">{descDisplay}</td>
                     <td className="text-right align-top">
-                      {/* Amount NET (yang sekarang) */}
                       <div
                         className={`tabular-nums ${
-                          isReversalRowForAmount(r) ? "text-red-600 dark:text-red-400" : ""
+                          isReversalRowForAmount(r)
+                            ? "text-red-600 dark:text-red-400"
+                            : ""
                         }`}
                       >
                         {formatAmount(r.amount)}
                       </div>
 
-                      {/* Detail khusus Deposit */}
                       {(r.kind === "DEPOSIT" || r.kind === "REVERSAL_DEPOSIT") &&
                         r.deposit_id &&
                         depositMap[r.deposit_id] && (
@@ -1347,12 +1223,8 @@ export default function BankMutationsTable() {
                           </>
                         )}
                     </td>
-                    <td className="text-right">
-                      {formatAmount(r.balance_before)}
-                    </td>
-                    <td className="text-right">
-                      {formatAmount(r.balance_after)}
-                    </td>
+                    <td className="text-right">{formatAmount(r.balance_before)}</td>
+                    <td className="text-right">{formatAmount(r.balance_after)}</td>
                     <td>{creator}</td>
                   </tr>
                 );
